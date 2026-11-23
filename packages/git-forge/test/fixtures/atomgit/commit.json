@@ -1,0 +1,21 @@
+{
+  "id": "abc123",
+  "short_id": "ab03ab03",
+  "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "url": "https://api.atomgit.com/api/v5/repos/example-org/demo-kit/commits/ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "html_url": "https://atomgit.com/example-org/demo-kit/commits/detail/ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "commit": {
+    "author": {
+      "name": "example-author",
+      "email": "author@example.invalid",
+      "date": "2025-05-01T16:00:00+08:00"
+    },
+    "committer": {
+      "name": "example-author",
+      "email": "author@example.invalid",
+      "date": "2025-05-01T16:00:00+08:00"
+    },
+    "message": "Add the third example"
+  },
+  "parents": [{ "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02" }]
+}

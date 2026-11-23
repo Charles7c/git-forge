@@ -1,0 +1,97 @@
+[
+  {
+    "url": "https://api.github.com/repos/example-org/demo-kit/issues/101",
+    "repository_url": "https://api.github.com/repos/example-org/demo-kit",
+    "labels_url": "https://api.github.com/repos/example-org/demo-kit/issues/101/labels{/name}",
+    "comments_url": "https://api.github.com/repos/example-org/demo-kit/issues/101/comments",
+    "events_url": "https://api.github.com/repos/example-org/demo-kit/issues/101/events",
+    "html_url": "https://github.com/example-org/demo-kit/issues/101",
+    "id": 5024,
+    "node_id": "sample-node-5",
+    "number": 101,
+    "title": "Add a sample greeting",
+    "user": {
+      "login": "example-author",
+      "id": 5001,
+      "node_id": "sample-node-10",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "html_url": "https://github.com/example-author",
+      "type": "User",
+      "site_admin": false
+    },
+    "labels": [
+      {
+        "id": 5002,
+        "node_id": "sample-node-7",
+        "url": "https://api.github.com/repos/example-org/demo-kit/labels/enhancement",
+        "name": "enhancement",
+        "color": "a2eeef",
+        "default": true,
+        "description": "New feature or request"
+      },
+      {
+        "id": 5003,
+        "node_id": "sample-node-8",
+        "url": "https://api.github.com/repos/example-org/demo-kit/labels/docs",
+        "name": "docs",
+        "color": "0075ca",
+        "default": true,
+        "description": "Documentation"
+      }
+    ],
+    "state": "open",
+    "locked": false,
+    "assignee": null,
+    "assignees": [
+      {
+        "login": "example-author",
+        "id": 5001,
+        "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+        "type": "User",
+        "site_admin": false
+      }
+    ],
+    "milestone": null,
+    "comments": 3,
+    "created_at": "2025-01-05T12:34:56Z",
+    "updated_at": "2025-02-11T08:09:10Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": "Add a greeting to the example output."
+  },
+  {
+    "url": "https://api.github.com/repos/example-org/demo-kit/issues/102",
+    "repository_url": "https://api.github.com/repos/example-org/demo-kit",
+    "html_url": "https://github.com/example-org/demo-kit/pull/102",
+    "id": 5025,
+    "node_id": "sample-node-11",
+    "number": 102,
+    "title": "Add example output",
+    "user": {
+      "login": "example-author",
+      "id": 5001,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "User",
+      "site_admin": false
+    },
+    "labels": [],
+    "state": "open",
+    "locked": false,
+    "assignee": null,
+    "assignees": [],
+    "milestone": null,
+    "comments": 1,
+    "created_at": "2025-02-01T01:02:03Z",
+    "updated_at": "2025-02-02T03:04:05Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": "Sample pull request description.",
+    "pull_request": {
+      "url": "https://api.github.com/repos/example-org/demo-kit/pulls/102",
+      "html_url": "https://github.com/example-org/demo-kit/pull/102",
+      "diff_url": "https://github.com/example-org/demo-kit/pull/102.diff",
+      "patch_url": "https://github.com/example-org/demo-kit/pull/102.patch",
+      "merged_at": null
+    }
+  }
+]

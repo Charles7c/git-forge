@@ -1,0 +1,48 @@
+[
+  {
+    "id": 5010,
+    "full_name": "example-org/demo-kit",
+    "human_name": "Example Organization / demo-kit",
+    "namespace": {
+      "id": 5005,
+      "type": "group",
+      "name": "Example Organization",
+      "path": "example-org",
+      "html_url": "https://gitee.com/example-org"
+    },
+    "path": "demo-kit",
+    "name": "demo-kit",
+    "description": "A sample project for adapter tests.",
+    "html_url": "https://gitee.com/example-org/demo-kit.git",
+    "private": false,
+    "public": true,
+    "fork": false,
+    "language": "Java",
+    "default_branch": "dev",
+    "created_at": "2022-06-01T00:00:00+08:00",
+    "updated_at": "2025-05-01T00:00:00+08:00"
+  },
+  {
+    "id": 5011,
+    "full_name": "example-org/demo-utils",
+    "human_name": "Example Organization / demo-utils",
+    "namespace": {
+      "id": 5005,
+      "type": "group",
+      "name": "Example Organization",
+      "path": "example-org",
+      "html_url": "https://gitee.com/example-org"
+    },
+    "path": "demo-utils",
+    "name": "demo-utils",
+    "description": null,
+    "html_url": "https://gitee.com/example-org/demo-utils.git",
+    "private": false,
+    "public": true,
+    "fork": false,
+    "language": "Java",
+    "default_branch": "dev",
+    "created_at": "2023-01-01T00:00:00+08:00",
+    "updated_at": "2025-04-01T00:00:00+08:00"
+  }
+]

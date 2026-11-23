@@ -1,0 +1,8 @@
+packages:
+  - 'packages/*'
+
+# pnpm blocks dependency lifecycle scripts unless they are explicitly trusted.
+# esbuild ships the native binary that tsup (and therefore `pnpm build`) needs,
+# so its install script is allowed here and nowhere else.
+allowBuilds:
+  esbuild: true

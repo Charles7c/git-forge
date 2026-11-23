@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://api.github.com/repos/example-org/demo-kit/issues/comments/5020",
+    "html_url": "https://github.com/example-org/demo-kit/issues/101#issuecomment-5020",
+    "issue_url": "https://api.github.com/repos/example-org/demo-kit/issues/101",
+    "id": 5020,
+    "node_id": "sample-node-3",
+    "user": {
+      "login": "example-author",
+      "id": 5001,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "User",
+      "site_admin": false
+    },
+    "created_at": "2025-01-06T09:00:00Z",
+    "updated_at": "2025-01-06T09:30:00Z",
+    "author_association": "OWNER",
+    "body": "Please include a short example."
+  },
+  {
+    "url": "https://api.github.com/repos/example-org/demo-kit/issues/comments/5021",
+    "html_url": "https://github.com/example-org/demo-kit/issues/101#issuecomment-5021",
+    "issue_url": "https://api.github.com/repos/example-org/demo-kit/issues/101",
+    "id": 5021,
+    "node_id": "sample-node-4",
+    "user": {
+      "login": "example-author",
+      "id": 5001,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "User",
+      "site_admin": false
+    },
+    "created_at": "2025-01-07T09:00:00Z",
+    "updated_at": "2025-01-07T09:00:00Z",
+    "author_association": "OWNER",
+    "body": "Sample change acknowledged."
+  }
+]
