@@ -147,7 +147,7 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 
 ## 分页、重试与错误
 
-列表按页序合并并去重，默认 `maxPages` 为 10（每页请求 100 条），可调小以控制读取量。Gitee 的 open/closed Issue 查询分别对两个原生状态分页。读取遇限流、传输错误或可重试服务端错误时，首次请求后最多重试三次。没有服务端提示时，读取使用带全抖动的指数退避。有效的 `Retry-After`（秒数或 HTTP 日期）指定下次请求的最早时间；所需等待超过 `retry.maxRetryAfterMs`（默认 60 秒）时，SDK 直接返回原错误，不再重试。仅当 GitHub 返回限流响应且剩余配额为零时，才用配额重置时间作为后备提示。默认不重试写请求。用 `git.bulk(items, run, { concurrency: 4 })` 执行多项独立调用，结果保留输入顺序与下标；逐项检查 `{ ok, value }` 或 `{ ok, error }`，成功项不回滚。
+列表按页序合并并去重，默认 `maxPages` 为 10（每页请求 100 条），可调小以控制读取量。Gitee 的 open/closed Issue 查询分别对两个原生状态分页。AtomGit 的 closed PR 查询分别读取 `closed`、`merged`、`locked`，每种状态最多 `maxPages` 页，最后按 PR 编号去重。读取遇限流、传输错误或可重试服务端错误时，首次请求后最多重试三次。没有服务端提示时，读取使用带全抖动的指数退避。有效的 `Retry-After`（秒数或 HTTP 日期）指定下次请求的最早时间；所需等待超过 `retry.maxRetryAfterMs`（默认 60 秒）时，SDK 直接返回原错误，不再重试。仅当 GitHub 返回限流响应且剩余配额为零时，才用配额重置时间作为后备提示。默认不重试写请求。用 `git.bulk(items, run, { concurrency: 4 })` 执行多项独立调用，结果保留输入顺序与下标；逐项检查 `{ ok, value }` 或 `{ ok, error }`，成功项不回滚。
 
 | `GitForgeError.code`      | 处理建议                                                 |
 | ------------------------- | -------------------------------------------------------- |

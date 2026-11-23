@@ -137,7 +137,7 @@ const CALLS: Readonly<
   },
   'pulls.get': {
     method: 'getPullRequest',
-    invoke: (c, provider) => c.getPullRequest({ provider, ...REPO, number: 1 }),
+    invoke: (c, provider) => c.getPullRequest({ provider, ...REPO, number: PULL.number }),
   },
   'pulls.create': {
     method: 'createPullRequest',
@@ -146,7 +146,7 @@ const CALLS: Readonly<
   },
   'pulls.merge': {
     method: 'mergePullRequest',
-    invoke: (c, provider) => c.mergePullRequest({ provider, ...REPO, number: 1 }),
+    invoke: (c, provider) => c.mergePullRequest({ provider, ...REPO, number: PULL.number }),
   },
   'pulls.listComments': {
     method: 'listPullRequestComments',

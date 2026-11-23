@@ -775,3 +775,96 @@ describe('AtomGit PR detail and conversation links', () => {
     );
   });
 });
+
+describe('AtomGit pull request identity', () => {
+  const args = withProvider({ owner: 'o', repo: 'r', number: 7 });
+  const base = { ref: 'main', sha: 'base-tip' },
+    head = { ref: 'topic', sha: 'head-tip' };
+  it.each([
+    ['fast path, wrong number', { number: 8, base, head }],
+    ['fallback, wrong number', { number: 8 }],
+    ['fast path, no number', { base, head }],
+    ['fallback, no number', {}],
+    ['array', []],
+    ['null', null],
+    ['scalar', '7'],
+    ['fraction', { number: 7.5 }],
+    ['unsafe integer', { number: 9007199254740992 }],
+    ['exponent', { number: '7e0' }],
+    ['boolean', { number: true }],
+    ['zero', { number: 0 }],
+    ['conflicting aliases', { number: '8', iid: 7 }],
+  ])('rejects detail before any fallback: %s', async (_name, detail) => {
+    const { ctx, mock } = buildHarness(atomgitAdapter);
+    mock.setRoutes([
+      {
+        match: '/pulls/7',
+        responses: [jsonResponse(detail, { headers: { 'x-request-id': 'detail-id' } })],
+      },
+      { match: '/pulls', responses: [jsonResponse([{ number: 7, base, head }])] },
+    ]);
+    await expect(atomgitAdapter.getPullRequest(ctx, args)).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+      provider: 'atomgit',
+      status: 200,
+      requestId: 'detail-id',
+    });
+    expect(mock.calls).toHaveLength(1);
+    expect(new URL(mock.calls[0]!.url).pathname).toMatch(/\/pulls\/7$/);
+  });
+  it.each([{ number: '007' }, { iid: 7 }, { number: 7, iid: '7' }])(
+    'accepts a verified detail identity %j',
+    async (identity) => {
+      const { ctx, mock } = buildHarness(atomgitAdapter);
+      mock.setRoutes([
+        { match: '/pulls/7', responses: [jsonResponse({ ...identity, base, head })] },
+      ]);
+      await expect(atomgitAdapter.getPullRequest(ctx, args)).resolves.toMatchObject({
+        number: 7,
+        base,
+        head,
+      });
+      expect(mock.calls).toHaveLength(1);
+    },
+  );
+  it.each([{}, { number: ' 7' }, { iid: '0x7' }, { number: '9007199254740993' }, { number: -1 }])(
+    'rejects a list identity %j instead of manufacturing a number',
+    async (identity) => {
+      const { ctx, mock } = buildHarness(atomgitAdapter);
+      mock.setRoutes([
+        {
+          match: '/pulls',
+          responses: [
+            jsonResponse([{ ...identity, base }], { headers: { 'x-request-id': 'list-id' } }),
+          ],
+        },
+      ]);
+      await expect(atomgitAdapter.listPullRequests(ctx, args)).rejects.toMatchObject({
+        code: 'PROVIDER_ERROR',
+        provider: 'atomgit',
+        status: 200,
+        requestId: 'list-id',
+      });
+      expect(mock.calls).toHaveLength(1);
+    },
+  );
+  it('does not coerce a fallback row into the requested number', async () => {
+    const { ctx, mock } = buildHarness(atomgitAdapter);
+    mock.setRoutes([
+      { match: '/pulls/7', responses: [jsonResponse({ number: 7, base })] },
+      {
+        match: '/pulls',
+        responses: [
+          jsonResponse([{ number: '7e0', head }], { headers: { 'x-request-id': 'fallback-id' } }),
+        ],
+      },
+    ]);
+    await expect(atomgitAdapter.getPullRequest(ctx, args)).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+      provider: 'atomgit',
+      status: 200,
+      requestId: 'fallback-id',
+    });
+    expect(mock.calls).toHaveLength(2);
+  });
+});

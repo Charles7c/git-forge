@@ -8,7 +8,13 @@ import type {
 } from '../core/types.js';
 import type { AdapterCtx } from './types.js';
 
-type Mapper = (owner: string, repo: string, raw: unknown, base: PullRequestRef) => PullRequest;
+type Mapper = (
+  owner: string,
+  repo: string,
+  raw: unknown,
+  base: PullRequestRef,
+  invalidResponse: (message: string) => Error,
+) => PullRequest;
 
 /** Require an actual target ref on every public PR, including list and write results. */
 export function pullFromResponse(
@@ -30,7 +36,9 @@ export function pullFromResponse(
       'Pull request response is missing its required base ref or SHA',
     );
   }
-  return map(params.owner, params.repo, raw, { ref: base.ref, sha: base.sha });
+  return map(params.owner, params.repo, raw, { ref: base.ref, sha: base.sha }, (message) =>
+    ctx.http.invalidResponse(response, message),
+  );
 }
 
 /** Page each native state independently. A local filter must not shorten the raw page count. */

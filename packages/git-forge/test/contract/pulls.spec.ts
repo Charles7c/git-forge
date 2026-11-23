@@ -168,10 +168,15 @@ describe.each(PROVIDERS)('pull-request contract (%s)', (provider) => {
 });
 
 describe.each(['gitee', 'atomgit'] as const)('native PR states (%s)', (provider) => {
+  const atomgit = provider === 'atomgit';
   it.each([
     ['open', [1], ['open']],
-    ['closed', [2, 3], ['closed', 'merged']],
-    ['all', [1, 2, 3], ['all']],
+    [
+      'closed',
+      atomgit ? [2, 3, 4] : [2, 3],
+      atomgit ? ['closed', 'merged', 'locked'] : ['closed', 'merged'],
+    ],
+    ['all', atomgit ? [1, 2, 3, 4] : [1, 2, 3], ['all']],
   ] as const)(
     'normalizes and deduplicates %s within per-stream page limits',
     async (state, numbers, streams) => {
@@ -182,14 +187,16 @@ describe.each(['gitee', 'atomgit'] as const)('native PR states (%s)', (provider)
       });
       const open = row(1, 'open'),
         closed = row(2, 'closed'),
-        merged = row(3, 'merged');
+        merged = row(3, 'merged'),
+        locked = row(4, 'locked');
       const { client, mock } = buildClient(
         {},
         Object.entries({
           open: [open],
           closed: [closed, row(3, 'closed')],
           merged: [merged, merged],
-          all: [open, closed, merged],
+          ...(atomgit ? { locked: [locked, locked] } : {}),
+          all: atomgit ? [open, closed, merged, locked] : [open, closed, merged],
         }).map(([key, body]) => ({
           match: `state=${key}`,
           responses: [{ body, headers: { total_page: '2' } }],
@@ -203,6 +210,11 @@ describe.each(['gitee', 'atomgit'] as const)('native PR states (%s)', (provider)
       expect(mock.calls.map((call) => new URL(call.url).searchParams.get('state'))).toEqual(
         streams,
       );
+      if (state === 'closed') {
+        const all = await client.listPullRequests({ provider, ...REPO, state: 'all', maxPages: 1 });
+        const closedIds = all.filter((p) => p.state === 'closed').map((p) => p.number);
+        expect(result.map((p) => p.number)).toEqual(closedIds);
+      }
     },
   );
 });

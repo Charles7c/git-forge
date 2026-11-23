@@ -8,7 +8,7 @@
  *   verbatim — no string building.
  * - `human_name` is a display name with spaces (`Example Organization / demo-kit`);
  *   `namespace.path` and `full_name` are the path-safe forms.
- * - Pull requests have a third state, `merged`, folded into `closed` + `merged`.
+ * - Closed PRs include both `merged` and `locked`; only merge evidence sets `merged`.
  * - Pull-request web URLs live under `/merge_requests/`; the raw value is kept
  *   because rewriting it to `/pulls/` would 404.
  * - Issue state updates use `close` / `reopen`, not `closed` / `open`.
@@ -143,7 +143,7 @@ export function mapIssueState(raw: unknown): IssueState {
 }
 
 /**
- * Folds AtomGit's three pull-request states into the binary contract.
+ * Folds AtomGit's open, closed, merged and locked states into the binary contract.
  *
  * `merged` becomes `closed`; the caller reads `merged: true` for the distinction.
  */
@@ -218,6 +218,26 @@ export function mapRef(raw: unknown): PullRequestRef | undefined {
   return ref !== undefined && sha !== undefined ? { ref, sha } : undefined;
 }
 
+/** Parse only positive, safe decimal identities; coercion would also admit booleans and exponents. */
+function decimalPullNumber(value: unknown): number | undefined {
+  const n =
+    typeof value === 'string' && value.length > 0 && !/\D/.test(value) ? Number(value) : value;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
+/** Accept either native spelling, but never choose between two conflicting identities. */
+export function requirePullNumber(
+  raw: unknown,
+  invalidResponse: (message: string) => Error,
+): number {
+  const record = asRecord(raw);
+  const n = decimalPullNumber(record.number === undefined ? record.iid : record.number);
+  if (n === undefined || (record.iid !== undefined && decimalPullNumber(record.iid) !== n)) {
+    throw invalidResponse('AtomGit pull request is missing a valid, unambiguous number');
+  }
+  return n;
+}
+
 /**
  * Maps one AtomGit pull request.
  *
@@ -229,6 +249,7 @@ export function mapPullRequest(
   repo: string,
   raw: unknown,
   base: PullRequestRef,
+  invalidResponse: (message: string) => Error,
 ): PullRequest {
   const record = asRecord(raw);
   const rawState = str(record.state);
@@ -238,7 +259,7 @@ export function mapPullRequest(
     provider: PROVIDER,
     owner,
     repo,
-    number: num(record.number) ?? num(record.iid) ?? Number(str(record.number) ?? 0),
+    number: requirePullNumber(record, invalidResponse),
     title: str(record.title) ?? '',
     state: merged ? 'closed' : mapPullRequestState(rawState),
     merged,

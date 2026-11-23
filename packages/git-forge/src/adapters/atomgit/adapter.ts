@@ -42,6 +42,7 @@ import {
   mapPullRequest,
   mapRepository,
   mapRef,
+  requirePullNumber,
   str,
   toAtomGitState,
 } from './map.js';
@@ -247,7 +248,7 @@ class AtomGitAdapter
     }
 
     return collectPullRequests(ctx, params, mapPullRequest, {
-      states: params.state === 'closed' ? ['closed', 'merged'] : [params.state],
+      states: params.state === 'closed' ? ['closed', 'merged', 'locked'] : [params.state],
       query: {
         base: params.base,
         labels: joinLabels(params.labels),
@@ -269,14 +270,22 @@ class AtomGitAdapter
       path: `${REPO_PATH}/pulls/{number}`,
       pathParams: { ...repoParams(params.owner, params.repo), number: String(params.number) },
     });
+    const number = requirePullNumber(response.json, (message) =>
+      ctx.http.invalidResponse(response, message),
+    );
+    if (number !== params.number) {
+      throw ctx.http.invalidResponse(
+        response,
+        'AtomGit detail returned a different pull request number',
+      );
+    }
     const detail = asRecord(response.json);
     if (mapRef(detail.head) && mapRef(detail.base)) {
       return pullFromResponse(mapPullRequest, ctx, params, response);
     }
     // Only the same PR may supply a missing ref. Do not invent either ref if
     // the bounded list page does not include it.
-    const index = await this.headIndex(ctx, params.owner, params.repo);
-    const other = index.get(params.number);
+    const other = await this.findPullRefs(ctx, params);
     return pullFromResponse(mapPullRequest, ctx, params, response, {
       ...detail,
       head: mapRef(detail.head) ?? other?.head,
@@ -585,39 +594,27 @@ class AtomGitAdapter
   /* Internals                                                              */
   /* ---------------------------------------------------------------------- */
 
-  /**
-   * Builds a number -> pull-request index from one list call.
-   *
-   * Use the largest page to find the ref without enumerating the repository.
-   * Pull requests outside that page keep their missing head.
-   */
-  private async headIndex(
+  /** Look for refs on one bounded list page; only a verified native identity may supply them. */
+  private async findPullRefs(
     ctx: AdapterCtx,
-    owner: string,
-    repo: string,
-  ): Promise<Map<number, { head?: PullRequest['head']; base?: PullRequest['base'] }>> {
-    const entries = await collectPages<unknown>(
-      ctx.http,
-      {
-        method: 'GET',
-        path: `${REPO_PATH}/pulls`,
-        pathParams: { owner, repo },
-      },
-      {
-        maxPages: 1,
-        perPage: HEAD_BACKFILL_PER_PAGE,
-        query: { state: 'all' },
-        selectItems: (raw) => asArray(raw),
-        keyOf: (raw) => listKey(asRecord(raw).number),
-      },
-    );
-
-    const index = new Map<number, { head?: PullRequest['head']; base?: PullRequest['base'] }>();
-    for (const entry of entries) {
-      const raw = asRecord(entry);
-      index.set(Number(raw.number ?? raw.iid), { head: mapRef(raw.head), base: mapRef(raw.base) });
+    params: WithProvider<GetPullRequestParams>,
+  ): Promise<Partial<Pick<PullRequest, 'head' | 'base'>> | undefined> {
+    const response = await ctx.http.request({
+      method: 'GET',
+      path: `${REPO_PATH}/pulls`,
+      pathParams: repoParams(params.owner, params.repo),
+      query: { state: 'all', per_page: HEAD_BACKFILL_PER_PAGE, page: 1 },
+    });
+    if (!Array.isArray(response.json))
+      throw ctx.http.invalidResponse(response, 'Expected a pull request list');
+    const invalid = (message: string) => ctx.http.invalidResponse(response, message);
+    for (const raw of response.json) {
+      if (requirePullNumber(raw, invalid) === params.number) {
+        const row = asRecord(raw);
+        return { head: mapRef(row.head), base: mapRef(row.base) };
+      }
     }
-    return index;
+    return undefined;
   }
 
   /** Shared comment listing used by both issue and pull-request domains. */
