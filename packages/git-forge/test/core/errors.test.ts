@@ -421,6 +421,7 @@ describe('errorFromNetwork', () => {
       cause,
     });
     expect(error.message).not.toContain(SECRET_TOKEN);
-    expect(error.cause).toBe(cause);
+    expect(error.cause).toBeDefined();
+    expect(String(error.cause)).not.toContain(SECRET_TOKEN);
   });
 });

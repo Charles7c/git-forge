@@ -5,8 +5,15 @@
  * makes auth injection, timeouts, retries and redaction impossible to bypass,
  * and it gives tests one seam to substitute.
  */
-import { errorFromNetwork, errorFromResponse, type GitForgeError } from './errors.js';
-import { redactUrl } from './redact.js';
+import {
+  errorFromNetwork,
+  errorFromResponse,
+  extractRequestId,
+  GitForgeError,
+  invalidArgumentError,
+} from './errors.js';
+import { assertFilePath, assertPathSegment } from './validate.js';
+import { REDACTED, redactUrl, scrubSecrets } from './redact.js';
 import {
   computeDelay,
   parseRetryAfter,
@@ -118,7 +125,11 @@ export const DEFAULT_USER_AGENT = 'git-forge/0.1.0';
  * token to another.
  */
 export class HttpClient {
-  readonly baseUrl: string;
+  readonly #base: URL;
+
+  get baseUrl(): string {
+    return stripTrailingSlash(this.#base.href);
+  }
   readonly timeoutMs: number;
   readonly provider: Provider;
 
@@ -132,7 +143,24 @@ export class HttpClient {
   private readonly userAgent: string;
 
   constructor(options: HttpClientOptions) {
-    this.baseUrl = stripTrailingSlash(options.baseUrl);
+    try {
+      this.#base = new URL(options.baseUrl);
+    } catch {
+      throw invalidArgumentError('Invalid baseUrl: expected an absolute URL', options.provider);
+    }
+    const { protocol, hostname, username, password, hash } = this.#base;
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+    if (
+      (protocol !== 'https:' && !(protocol === 'http:' && loopback)) ||
+      username ||
+      password ||
+      hash
+    ) {
+      throw invalidArgumentError(
+        'Invalid baseUrl: expected HTTPS or loopback without userinfo or fragment',
+        options.provider,
+      );
+    }
     this.provider = options.provider;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.auth = options.auth;
@@ -152,14 +180,6 @@ export class HttpClient {
     return this.token !== undefined && this.token.length > 0;
   }
 
-  /**
-   * Renders a request for diagnostics.
-   *
-   * Query parameters are shown, path parameters are *not* substituted: the
-   * template is what belongs in a message, both because a concrete path can
-   * carry identifying data and because a caller needs the template to find the
-   * endpoint in the platform docs. The token is never included.
-   */
   /**
    * Renders a request for diagnostics.
    *
@@ -186,12 +206,17 @@ export class HttpClient {
       }
     }
     if (this.auth?.style === 'query' && this.token !== undefined && this.token.length > 0) {
-      params.set(this.auth.param ?? 'access_token', this.token);
+      params.set(this.auth.param ?? 'access_token', REDACTED);
     }
     const query = params.toString();
     const suffix = query.length > 0 ? `?${query}` : '';
     // redactUrl masks the token before the string can be observed.
-    return redactUrl(`${this.baseUrl}${spec.path}${suffix}`);
+    return scrubSecrets(
+      redactUrl(
+        `${this.#base.origin}${stripTrailingSlash(this.#base.pathname)}${spec.path}${suffix}`,
+      ),
+      this.secretValues(),
+    ).slice(0, 768);
   }
 
   /**
@@ -249,14 +274,17 @@ export class HttpClient {
     // AbortSignal.timeout covers the whole attempt, including a slow body read.
     const signal = AbortSignal.timeout(this.timeoutMs);
 
-    let response: Response;
+    let response: Response | undefined;
+    let text: string;
     try {
       response = await this.fetchImpl(url, {
         method: spec.method,
         headers,
         body: body ?? null,
         signal,
+        redirect: 'error',
       });
+      text = await response.text();
     } catch (cause) {
       return {
         kind: 'failure',
@@ -265,17 +293,26 @@ export class HttpClient {
           context,
           cause,
           secrets,
+          response,
           timeoutMs: this.timeoutMs,
         }),
       };
     }
 
+    let json: unknown;
+    if (text.length > 0) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        if (response.ok) throw this.invalidResponse(response, 'Expected a JSON response');
+      }
+    }
     if (!response.ok) {
       const error = errorFromResponse({
         provider: this.provider,
         status: response.status,
         headers: response.headers,
-        body: await this.readJsonSafely(response),
+        body: json,
         context,
         secrets,
       });
@@ -288,10 +325,9 @@ export class HttpClient {
       return { kind: 'failure', error, retryAfterMs };
     }
 
-    const json = (await this.readJsonSafely(response)) as T;
     return {
       kind: 'response',
-      response: { status: response.status, headers: response.headers, json },
+      response: { status: response.status, headers: response.headers, json: json as T },
     };
   }
 
@@ -303,7 +339,16 @@ export class HttpClient {
    */
   private buildUrl(spec: HttpRequestSpec): string {
     const path = substitutePath(spec.path, spec.pathParams);
-    const url = new URL(`${this.baseUrl}${path}`);
+    const url = new URL(this.#base.href);
+    const prefix = stripTrailingSlash(this.#base.pathname);
+    url.pathname = prefix + path;
+    if (
+      url.origin !== this.#base.origin ||
+      !url.pathname.startsWith(`${prefix}/`) ||
+      url.pathname !== prefix + path
+    ) {
+      throw invalidArgumentError('Invalid request path for the configured API base', this.provider);
+    }
 
     const queryParams: Record<string, string | number | boolean | undefined> = {
       ...(spec.query ?? {}),
@@ -373,24 +418,29 @@ export class HttpClient {
     return JSON.stringify(spec.body);
   }
 
-  /** Reads a response body as JSON, tolerating empty and non-JSON payloads. */
-  private async readJsonSafely(response: Response): Promise<unknown> {
-    const text = await response.text();
-    if (text.length === 0) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      // A non-JSON body (proxy error page, HTML login redirect) is passed
-      // through as text so the caller can still see something meaningful.
-      return text;
-    }
+  /** Builds a non-replayable error when success cannot be confirmed. */
+  invalidResponse(
+    response: Pick<HttpResponse, 'status' | 'headers'>,
+    message: string,
+  ): GitForgeError {
+    return new GitForgeError({
+      code: 'PROVIDER_ERROR',
+      provider: this.provider,
+      status: response.status,
+      requestId: extractRequestId(response.headers),
+      message,
+      secrets: this.secretValues(),
+    });
   }
 
   /** Known token values, for scrubbing error messages. */
   private secretValues(): readonly string[] {
-    return this.token !== undefined && this.token.length > 0 ? [this.token] : [];
+    if (!this.token) return [];
+    return [
+      this.token,
+      encodeURIComponent(this.token),
+      new URLSearchParams([['v', this.token]]).toString().slice(2),
+    ];
   }
 }
 
@@ -399,13 +449,34 @@ function substitutePath(
   template: string,
   params: Readonly<Record<string, string>> | undefined,
 ): string {
-  let path = template;
-  if (params !== undefined) {
-    for (const [key, value] of Object.entries(params)) {
-      path = path.split(`{${key}}`).join(encodeURIComponent(value));
-    }
-  }
-  return path;
+  if (!template.startsWith('/') || /[?#\\]/.test(template))
+    throw invalidArgumentError('Expected an absolute API path without query or fragment');
+  if (template === '/') return template;
+  return (
+    '/' +
+    template
+      .slice(1)
+      .split('/')
+      .map((segment) => {
+        const key = /^\{(\w+)\}$/.exec(segment)?.[1];
+        if (key !== undefined) {
+          const value = params?.[key];
+          if (['path', 'ref', 'branch'].includes(key)) {
+            assertFilePath(key, value);
+            return value.split('/').map(encodeURIComponent).join('/');
+          }
+          assertPathSegment(key, value);
+          return encodeURIComponent(value!);
+        }
+        try {
+          assertPathSegment('path', decodeURIComponent(segment));
+        } catch {
+          throw invalidArgumentError('Invalid API path segment');
+        }
+        return segment;
+      })
+      .join('/')
+  );
 }
 
 /** Lowercases header names so merging cannot duplicate a header. */

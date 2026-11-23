@@ -31,7 +31,6 @@ import {
   asRecord,
   buildFileWriteResult,
   deriveBranchHtmlUrl,
-  encodePath,
   isPullRequestEntry,
   isShaLike,
   listKey,
@@ -418,8 +417,8 @@ class GitHubAdapter
   ): Promise<FileContent> {
     const response = await ctx.http.request<unknown>({
       method: 'GET',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: { owner: params.owner, repo: params.repo },
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       query: { ref: params.ref },
       headers: GITHUB_HEADERS,
     });
@@ -461,8 +460,8 @@ class GitHubAdapter
   ): Promise<FileWriteResult> {
     const response = await ctx.http.request<unknown>({
       method: 'DELETE',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: { owner: params.owner, repo: params.repo },
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       headers: GITHUB_HEADERS,
       body: { message: params.message, sha: params.sha, branch: params.branch },
     });
@@ -695,8 +694,8 @@ class GitHubAdapter
   ): Promise<FileWriteResult> {
     const response = await ctx.http.request<unknown>({
       method: 'PUT',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: { owner: params.owner, repo: params.repo },
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       headers: GITHUB_HEADERS,
       body: {
         message: params.message,

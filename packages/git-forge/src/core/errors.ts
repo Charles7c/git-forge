@@ -119,16 +119,20 @@ export class GitForgeError extends Error {
   constructor(init: GitForgeErrorInit) {
     // Scrub before calling super so the message is clean even if the receiver
     // captures `error.message` synchronously during construction.
-    super(scrubSecrets(init.message, init.secrets ?? []));
+    super(truncate(scrubSecrets(init.message, init.secrets), 1024));
 
     this.name = 'GitForgeError';
     this.code = init.code;
     this.provider = init.provider;
     this.status = init.status;
-    this.requestId = init.requestId;
+    this.requestId =
+      init.requestId === undefined
+        ? undefined
+        : truncate(scrubSecrets(init.requestId, init.secrets), 128);
     this.capability = init.capability;
     this.retryable = init.retryable ?? DEFAULT_RETRYABLE[init.code];
-    this.cause = init.cause;
+    // Logging an Error may inspect its entire cause chain.
+    this.cause = init.cause === undefined ? undefined : 'Underlying failure (details omitted)';
 
     // Keep `instanceof` working after transpilation to ES5-era targets.
     Object.setPrototypeOf(this, GitForgeError.prototype);
@@ -223,7 +227,11 @@ function readHeader(
  * result is truncated. This is the *only* body content allowed into an error
  * message; the rest of the payload stays out.
  */
-export function extractUpstreamMessage(body: unknown, maxLength = 200): string | undefined {
+export function extractUpstreamMessage(
+  body: unknown,
+  maxLength = 200,
+  secrets?: readonly string[],
+): string | undefined {
   if (body === null || typeof body !== 'object') {
     return undefined;
   }
@@ -231,7 +239,7 @@ export function extractUpstreamMessage(body: unknown, maxLength = 200): string |
   for (const key of ['message', 'error_message', 'error', 'errors']) {
     const value = record[key];
     if (typeof value === 'string' && value.length > 0) {
-      return truncate(value, maxLength);
+      return truncate(scrubSecrets(value, secrets), maxLength);
     }
   }
   return undefined;
@@ -291,7 +299,7 @@ export function errorFromResponse(params: {
   const { provider, status, headers, body, context, secrets } = params;
   const code = mapStatusToCode(status, headers);
   const requestId = extractRequestId(headers, body);
-  const upstream = extractUpstreamMessage(body);
+  const upstream = extractUpstreamMessage(body, 200, secrets);
 
   const detail = upstream === undefined ? '' : `: ${upstream}`;
   const message = `${context} failed with HTTP ${status} (${describeProvider(provider)})${detail}`;
@@ -357,8 +365,7 @@ export function retryableForStatus(code: ErrorCode, status: number): boolean {
 /**
  * Wraps a transport failure (fetch rejection, abort, timeout).
  *
- * The original is kept as `cause` so a caller can inspect it, but it is not
- * serialized: it may hold request details.
+ * Only safe context is retained, including response metadata if headers arrived.
  */
 export function errorFromNetwork(params: {
   provider: Provider;
@@ -366,11 +373,14 @@ export function errorFromNetwork(params: {
   cause: unknown;
   secrets?: readonly string[];
   timeoutMs?: number;
+  response?: Response;
 }): GitForgeError {
   const { provider, context, cause, secrets, timeoutMs } = params;
   const reason = describeNetworkCause(cause, timeoutMs);
   return new GitForgeError({
     code: 'NETWORK_ERROR',
+    status: params.response?.status,
+    requestId: extractRequestId(params.response?.headers),
     message: `${context} failed: ${reason} (${describeProvider(provider)})`,
     provider,
     retryable: true,

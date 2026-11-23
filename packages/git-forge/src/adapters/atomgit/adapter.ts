@@ -29,7 +29,6 @@ import {
   asRecord,
   deriveBranchHtmlUrl,
   deriveParentHtmlUrl,
-  encodePath,
   headFilterUnsupported,
   joinLabels,
   listKey,
@@ -449,8 +448,8 @@ class AtomGitAdapter
   ): Promise<FileContent> {
     const response = await ctx.http.request<unknown>({
       method: 'GET',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       query: { ref: params.ref },
     });
 
@@ -494,8 +493,8 @@ class AtomGitAdapter
     // query string — the one asymmetric spot between the two APIs).
     const response = await ctx.http.request<unknown>({
       method: 'DELETE',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       body: { sha: params.sha, message: params.message, branch: params.branch },
     });
 
@@ -688,8 +687,8 @@ class AtomGitAdapter
   ): Promise<FileWriteResult> {
     const response = await ctx.http.request<unknown>({
       method,
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       body: {
         content: params.content,
         message: params.message,

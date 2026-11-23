@@ -34,7 +34,6 @@ import {
   buildFileWriteResult,
   deriveBranchHtmlUrl,
   deriveParentHtmlUrl,
-  encodePath,
   joinLabels,
   listKey,
   mapBranch,
@@ -435,8 +434,8 @@ class GiteeAdapter
   ): Promise<FileContent> {
     const response = await ctx.http.request<unknown>({
       method: 'GET',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       query: { ref: params.ref },
     });
 
@@ -480,8 +479,8 @@ class GiteeAdapter
     // Gitee takes `sha` and `message` in the query string, with an empty body.
     const response = await ctx.http.request<unknown>({
       method: 'DELETE',
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       paramsIn: 'query',
       body: { sha: params.sha, message: params.message, branch: params.branch },
     });
@@ -686,8 +685,8 @@ class GiteeAdapter
   ): Promise<FileWriteResult> {
     const response = await ctx.http.request<unknown>({
       method,
-      path: `${REPO_PATH}/contents/${encodePath(params.path)}`,
-      pathParams: repoParams(params.owner, params.repo),
+      path: `${REPO_PATH}/contents/{path}`,
+      pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       body: {
         content: params.content,
         message: params.message,

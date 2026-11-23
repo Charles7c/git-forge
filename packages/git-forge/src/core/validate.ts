@@ -81,9 +81,7 @@ export function assertOneOf<T extends string>(
 /** Asserts a value is either a string or a number, as issue identifiers may be. */
 export function assertNativeId(field: string, value: unknown): void {
   if (typeof value === 'string') {
-    if (value.trim().length === 0) {
-      invalid(field, 'must not be empty');
-    }
+    assertPathSegment(field, value);
     return;
   }
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -119,8 +117,8 @@ export function assertRepoRef(value: unknown): void {
     invalid('owner/repo', `expected an object with owner and repo, received ${describe(value)}`);
   }
   const ref = value as { owner?: unknown; repo?: unknown };
-  assertNonEmpty('owner', ref.owner);
-  assertNonEmpty('repo', ref.repo);
+  assertPathSegment('owner', ref.owner);
+  assertPathSegment('repo', ref.repo);
 }
 
 /** Asserts a value is an optional array of non-empty strings. */
@@ -187,7 +185,7 @@ export function assertNonEmptyStringArray(field: string, value: unknown): void {
 /** Asserts a value is an organization/user login usable as a path segment. */
 export function assertPathSegment(field: string, value: unknown): void {
   assertNonEmpty(field, value);
-  if (/[/\\?#]/.test(value)) {
+  if (unsafeSegment(value) || /[/\\?#]/.test(value)) {
     invalid(field, 'must not contain path separators or query characters');
   }
 }
@@ -200,11 +198,22 @@ export function assertOptionalPathSegment(field: string, value: unknown): void {
   assertPathSegment(field, value);
 }
 
+/** A segment must survive URL normalization without acquiring path syntax. */
+function unsafeSegment(value: string): boolean {
+  return (
+    value === '' ||
+    value === '.' ||
+    value === '..' ||
+    /%(?:2e|2f|5c|25)/i.test(value) ||
+    Array.from(value).some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+  );
+}
+
 /** Asserts a file path is a relative path without traversal segments. */
 export function assertFilePath(field: string, value: unknown): asserts value is string {
   assertNonEmpty(field, value);
   const segments = value.split('/');
-  if (segments.some((segment) => segment === '..') || value.startsWith('/')) {
+  if (segments.some(unsafeSegment) || value.includes('\\')) {
     invalid(field, 'must be a relative path and must not contain ".." segments');
   }
 }

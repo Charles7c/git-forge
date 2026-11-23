@@ -248,7 +248,11 @@ describe('collectPages', () => {
 
     const result = await collectPages<{ key: string }>(
       http,
-      { method: 'GET', path: '/repos/{owner}/{repo}/issues' },
+      {
+        method: 'GET',
+        path: '/repos/{owner}/{repo}/issues',
+        pathParams: { owner: 'org', repo: 'repo' },
+      },
       {
         perPage: 2,
         selectItems: (raw) => raw as { key: string }[],

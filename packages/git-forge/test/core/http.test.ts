@@ -335,7 +335,11 @@ describe('error mapping', () => {
     const { client } = buildClient({ mock });
 
     const error = await expectGitForgeError(
-      client.request({ method: 'GET', path: '/repos/{owner}/{repo}' }),
+      client.request({
+        method: 'GET',
+        path: '/repos/{owner}/{repo}',
+        pathParams: { owner: 'org', repo: 'repo' },
+      }),
     );
 
     expect(error.code).toBe('NOT_FOUND');
@@ -408,7 +412,11 @@ describe('error mapping', () => {
     });
 
     const error = await expectGitForgeError(
-      client.request({ method: 'GET', path: '/repos/{owner}/{repo}' }),
+      client.request({
+        method: 'GET',
+        path: '/repos/{owner}/{repo}',
+        pathParams: { owner: 'org', repo: 'repo' },
+      }),
     );
 
     expect(error.code).toBe('NOT_FOUND');
@@ -424,7 +432,12 @@ describe('error mapping', () => {
     const { client } = buildClient({ mock, token: TOKEN });
 
     const error = await expectGitForgeError(
-      client.request({ method: 'PUT', path: '/pulls/{number}/merge', body: {} }),
+      client.request({
+        method: 'PUT',
+        path: '/pulls/{number}/merge',
+        pathParams: { number: '1' },
+        body: {},
+      }),
     );
 
     expect(error.code).toBe('PROVIDER_ERROR');
@@ -713,5 +726,112 @@ describe('describe', () => {
         query: { state: 'open' },
       }),
     ).toBe('https://api.github.com/repos/{owner}/{repo}/issues?state=open');
+  });
+});
+
+describe('transport boundaries', () => {
+  it.each([
+    'https://forge.example.invalid/enterprise/api?flavor=oauth',
+    'http://127.0.0.1:8123/api?flavor=oauth',
+  ])('keeps the base, nested route and redirect policy at %s', async (baseUrl) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({ ok: true }));
+    const { client } = buildClient({ mock: createMockFetch(), fetch, baseUrl, token: TOKEN });
+    await client.request({
+      method: 'POST',
+      path: '/repos/{owner}/heads/{branch}',
+      pathParams: { owner: 'org', branch: 'feature/docs' },
+      body: { name: 'draft' },
+    });
+    const [target, init] = fetch.mock.calls[0]!;
+    const url = new URL(String(target));
+    expect(url.origin).toBe(new URL(baseUrl).origin);
+    expect(url.pathname).toBe(`${new URL(baseUrl).pathname}/repos/org/heads/feature/docs`);
+    expect(url.searchParams.get('flavor')).toBe('oauth');
+    expect(init?.redirect).toBe('error');
+  });
+
+  it.each([
+    ['/repos/{owner}', { owner: '.' }],
+    ['/repos/{repo}', { repo: 'two/segments' }],
+    ['/issues/{number}', { number: '..' }],
+    ['/contents/{path}', { path: 'a/./b' }],
+    ['not-absolute', {}],
+  ] as const)('rejects malformed route %s locally', async (path, pathParams) => {
+    const mock = createMockFetch();
+    const { client } = buildClient({ mock, token: TOKEN });
+    await expect(client.request({ method: 'GET', path, pathParams })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+    });
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it.each(['header', 'trace'])('bounds and scrubs diagnostic fields from %s', async (source) => {
+    const id = TOKEN + 'x'.repeat(300);
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(
+        Response.json(
+          { message: TOKEN, trace_id: id },
+          { status: 401, headers: source === 'header' ? { 'x-request-id': id } : {} },
+        ),
+      );
+    const { client } = buildClient({
+      mock: createMockFetch(),
+      fetch,
+      token: TOKEN,
+      auth: { style: 'query', param: 'credential' },
+    });
+    const spec = { method: 'GET', path: '/issues' } as const;
+    expect(client.describe(spec)).toContain('credential=***');
+    const error = await expectGitForgeError(client.request(spec));
+    expect(JSON.stringify(error)).not.toContain(TOKEN);
+    expect(error.requestId).toMatch(/^\*\*\*/);
+    expect(error.requestId!.length).toBeLessThan(140);
+  });
+
+  it.each([
+    ['GET', 2],
+    ['POST', 1],
+  ] as const)('normalizes interrupted %s bodies', async (method, count) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError(TOKEN));
+            },
+          }),
+          { status: 200, headers: { 'x-request-id': 'body-id' } },
+        ),
+    );
+    const { client } = buildClient({
+      mock: createMockFetch(),
+      fetch,
+      retry: { maxRetries: 1 },
+      token: TOKEN,
+    });
+    const error = await expectGitForgeError(client.request({ method, path: '/issues' }));
+    expect(error.toJSON()).toMatchObject({
+      code: 'NETWORK_ERROR',
+      status: 200,
+      requestId: 'body-id',
+    });
+    expect(String(error.cause)).not.toContain(TOKEN);
+    expect(fetch).toHaveBeenCalledTimes(count);
+  });
+
+  it('rejects non-JSON success but accepts a no-content response', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response('not JSON', { headers: { 'x-request-id': 'format-id' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const { client } = buildClient({ mock: createMockFetch(), fetch });
+    await expect(client.request({ method: 'POST', path: '/issues' })).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+      status: 200,
+      requestId: 'format-id',
+    });
+    expect((await client.request({ method: 'DELETE', path: '/item' })).status).toBe(204);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
