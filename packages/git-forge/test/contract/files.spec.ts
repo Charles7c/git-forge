@@ -25,6 +25,75 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
   const data = loadFixtures(provider);
   const routes = contractRoutes(data);
 
+  describe.each([
+    ['create', undefined],
+    ['update', 'blob-sha'],
+  ] as const)('%s contents', (_op, sha) => {
+    it.each([
+      ['default UTF-8', undefined, '雪', '6Zuq'],
+      ['UTF-8', 'utf8', 'hi', 'aGk='],
+      ['binary', 'base64', '/wA=', '/wA='],
+      ['empty text', undefined, '', ''],
+      ['empty binary', 'base64', '', ''],
+    ] as const)('sends the exact bytes for %s', async (_name, encoding, content, wire) => {
+      const { client, mock } = buildClient({}, [
+        { match: '/contents/', responses: [{ body: WRITE_BODY }] },
+      ]);
+      const result = await client.createOrUpdateFile({
+        provider,
+        ...REPO,
+        path: 'docs/file',
+        message: 'write',
+        content,
+        encoding,
+        sha,
+      });
+      expect(result.commit_sha).toBe(COMMIT_SHA);
+      expect(mock.calls).toHaveLength(1);
+      expect(mock.calls[0]!.method).toBe(provider === 'github' || sha ? 'PUT' : 'POST');
+      expect(mock.calls[0]!.json).toMatchObject({ content: wire });
+    });
+    it('rejects invalid padding before HTTP', async () => {
+      const { client, mock } = buildClient({}, routes);
+      await expect(
+        client.createOrUpdateFile({
+          provider,
+          ...REPO,
+          path: 'doc',
+          message: 'write',
+          content: 'aGk==',
+          encoding: 'base64',
+          sha,
+        }),
+      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', provider });
+      expectNoHttp(mock);
+    });
+    it('never reports success or replays a write without a commit SHA', async () => {
+      const { client, mock } = buildClient({}, [
+        {
+          match: '/contents/',
+          responses: [{ body: { commit: {} }, headers: { 'x-request-id': 'write-id' } }],
+        },
+      ]);
+      await expect(
+        client.createOrUpdateFile({
+          provider,
+          ...REPO,
+          path: 'doc',
+          message: 'write',
+          content: 'text',
+          sha,
+        }),
+      ).rejects.toMatchObject({
+        code: 'PROVIDER_ERROR',
+        provider,
+        status: 200,
+        requestId: 'write-id',
+      });
+      expect(mock.calls).toHaveLength(1);
+    });
+  });
+
   it('creates a file and reports a commit', async () => {
     const { client } = buildClient({}, [{ match: /.*/, responses: [{ body: WRITE_BODY }] }]);
     const result = await client.createOrUpdateFile({
@@ -109,8 +178,8 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
     expect(result.paths).toEqual(['a.txt', 'b.txt', 'c.txt']);
 
     // Gitee answers the batch with exactly one request; GitHub runs the
-    // five-step chain plus one blob upload per base64 entry.
-    const expected = provider === 'gitee' ? 1 : 5 + 1;
+    // six-step chain plus one blob upload per base64 entry.
+    const expected = provider === 'gitee' ? 1 : 6 + 1;
     expect(mock.calls).toHaveLength(expected);
   });
 
@@ -121,7 +190,9 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
     if (provider === 'atomgit') {
       return;
     }
-    const { client, mock } = buildClient({}, [{ match: /.*/, responses: [{ body: WRITE_BODY }] }]);
+    const { client, mock } = buildClient({}, [
+      { match: /.*/, responses: [{ body: { sha: COMMIT_SHA, html_url: COMMIT_URL } }] },
+    ]);
     await client.pushFiles({
       provider,
       ...REPO,
@@ -155,12 +226,21 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
         match: /\/git\/commits\/[0-9a-f]+/,
         responses: [{ body: { sha: 'a'.repeat(40), tree: { sha: 'b'.repeat(40) } } }],
       },
+      {
+        match: '/git/trees/' + 'b'.repeat(40),
+        responses: [
+          { body: { truncated: false, tree: [{ path: 'c.txt', type: 'blob', mode: '100644' }] } },
+        ],
+      },
       { match: /\/git\/trees$/, responses: [{ body: { sha: 'b'.repeat(40) } }] },
       {
         match: /\/git\/commits$/,
         responses: [{ body: { sha: COMMIT_SHA, html_url: COMMIT_URL } }],
       },
-      { match: /\/git\/refs\/heads\//, responses: [{ body: { ref: 'refs/heads/dev' } }] },
+      {
+        match: /\/git\/refs\/heads\//,
+        responses: [{ body: { ref: 'refs/heads/dev', object: { sha: COMMIT_SHA } } }],
+      },
     ]);
 
     await client.pushFiles({

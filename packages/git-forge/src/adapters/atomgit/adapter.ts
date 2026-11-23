@@ -11,6 +11,7 @@
  * - response `url` fields point at `atomgit.com/api/v5/...`; every
  *   request is built from the configured base URL instead.
  */
+import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
 import { collectPages } from '../../core/paginate.js';
 import type {
@@ -504,7 +505,7 @@ class AtomGitAdapter
       provider: 'atomgit',
       owner: params.owner,
       repo: params.repo,
-      commit_sha: str(commit.sha) ?? '',
+      commit_sha: confirmedSha(ctx.http, response, commit.sha),
       commit_html_url: str(commit.html_url) ?? '',
       paths: [params.path],
       branch: params.branch ?? '',
@@ -555,7 +556,7 @@ class AtomGitAdapter
       owner: params.owner,
       repo: params.repo,
       name,
-      commit_sha: str(asRecord(record.commit).sha) ?? '',
+      commit_sha: confirmedSha(ctx.http, response, asRecord(record.commit).sha),
     };
     const isProtected = record.protected;
     if (typeof isProtected === 'boolean') {
@@ -690,7 +691,7 @@ class AtomGitAdapter
       path: `${REPO_PATH}/contents/{path}`,
       pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       body: {
-        content: params.content,
+        content: contentsBase64(params.content, params.encoding, 'atomgit'),
         message: params.message,
         branch: params.branch,
         sha: params.sha,
@@ -703,7 +704,7 @@ class AtomGitAdapter
       provider: 'atomgit',
       owner: params.owner,
       repo: params.repo,
-      commit_sha: str(commit.sha) ?? '',
+      commit_sha: confirmedSha(ctx.http, response, commit.sha),
       // AtomGit's commit objects do carry `html_url`.
       commit_html_url: str(commit.html_url) ?? '',
       paths: [params.path],

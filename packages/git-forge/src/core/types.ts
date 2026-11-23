@@ -422,7 +422,7 @@ export interface CreateOrUpdateFileParams extends RepoRef {
   branch?: string;
   /** Existing blob sha; required by all three platforms when updating. */
   sha?: string;
-  /** Encoding of `content`. Defaults to `base64`. */
+  /** Encoding of `content`. Defaults to `utf8`; use `base64` for pre-encoded bytes. */
   encoding?: ContentEncoding;
 }
 

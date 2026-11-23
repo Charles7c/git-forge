@@ -60,7 +60,7 @@ const PROVIDER_LABELS: Readonly<Record<Provider, string>> = {
  * How a supported state reads in prose.
  *
  * Callers may override the reason, because "supported" is not equally
- * informative for every capability: `pushFiles` is supported by a five-step chain
+ * informative for every capability: `pushFiles` is supported by a six-step chain
  * on one platform and a single request on another.
  */
 export type SupportNote = string;

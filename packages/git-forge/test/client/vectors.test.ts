@@ -291,9 +291,13 @@ describe('provider normalization examples', () => {
     );
   });
 
-  it('issues 5 + K requests for a GitHub batch (K = base64 entries)', async () => {
+  it('issues 6 + K requests for a GitHub batch (K = base64 entries)', async () => {
     const routes = [
       { match: /\/git\/blobs$/, responses: [jsonResponse({ sha: 'd'.repeat(40) })] },
+      {
+        match: '/git/trees/' + 'b'.repeat(40),
+        responses: [jsonResponse({ truncated: false, tree: [] })],
+      },
       { match: /\/git\/trees$/, responses: [jsonResponse({ sha: 'b'.repeat(40) })] },
       {
         match: (call: { url: string; method: string }) =>
@@ -308,10 +312,13 @@ describe('provider normalization examples', () => {
         match: /\/git\/ref\/heads\//,
         responses: [jsonResponse({ object: { sha: 'a'.repeat(40) } })],
       },
-      { match: /\/git\/refs\/heads\//, responses: [jsonResponse({ ref: 'refs/heads/dev' })] },
+      {
+        match: /\/git\/refs\/heads\//,
+        responses: [jsonResponse({ ref: 'refs/heads/dev', object: { sha: 'c'.repeat(40) } })],
+      },
     ];
 
-    // K = 0 → 5 requests.
+    // K = 0 → 6 cached-tree requests.
     const zero = buildClient({}, routes);
     await zero.client.pushFiles({
       provider: 'github',
@@ -320,9 +327,9 @@ describe('provider normalization examples', () => {
       message: 'm',
       files: [{ path: 'a.txt', action: 'create', content: 'hi' }],
     });
-    expect(zero.mock.calls).toHaveLength(5);
+    expect(zero.mock.calls).toHaveLength(6);
 
-    // K = 1 → 6 requests.
+    // K = 1 → 7 cached-tree requests.
     const one = buildClient({}, routes);
     await one.client.pushFiles({
       provider: 'github',
@@ -331,9 +338,9 @@ describe('provider normalization examples', () => {
       message: 'm',
       files: [{ path: 'a.txt', action: 'create', content: 'aGk=', encoding: 'base64' }],
     });
-    expect(one.mock.calls).toHaveLength(6);
+    expect(one.mock.calls).toHaveLength(7);
 
-    // K = 3 → 8 requests.
+    // K = 3 → 9 cached-tree requests.
     const three = buildClient({}, routes);
     await three.client.pushFiles({
       provider: 'github',
@@ -346,7 +353,7 @@ describe('provider normalization examples', () => {
         { path: 'c.txt', action: 'create', content: 'aGk=', encoding: 'base64' },
       ],
     });
-    expect(three.mock.calls).toHaveLength(8);
+    expect(three.mock.calls).toHaveLength(9);
   });
 
   it('issues exactly one request for a Gitee batch, with no existence probe', async () => {

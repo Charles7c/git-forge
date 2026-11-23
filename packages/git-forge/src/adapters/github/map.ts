@@ -2,7 +2,7 @@
  * GitHub response and parameter mapping.
  *
  * Everything platform-specific about GitHub lives here: field names, path
- * encoding, tree-entry construction for the five-step `pushFiles` chain, and
+ * encoding, tree-entry construction for the six-step `pushFiles` chain, and
  * validation of the closed three-value push contract.
  *
  * Raw payloads are treated as `unknown` and narrowed field by field. A platform

@@ -9,10 +9,12 @@
  *
  * - `/issues` returns pull requests as well; list entries carrying a
  *   `pull_request` key are dropped so `listIssues` means issues.
- * - `pushFiles` has no batch endpoint, so it runs the documented five-step
- *   `git/ref` -> `git/commits` -> `git/trees` -> `git/commits` -> `git/refs`
+ * - `pushFiles` has no batch endpoint, so it runs the Git data
+ *   read tip, commit and tree; create tree and commit; update the ref
  *   chain, which yields exactly one commit.
  */
+import type { HttpResponse } from '../../core/http.js';
+import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
 import { collectPages } from '../../core/paginate.js';
 import type {
@@ -44,6 +46,7 @@ import {
   readPushEntries,
   str,
 } from './map.js';
+import { resolveFileModes } from './tree.js';
 import type { PushPlanEntry } from './map.js';
 import { capabilities, paramCapabilities } from './capabilities.js';
 import type {
@@ -118,14 +121,15 @@ function assertUpdate(params: CreateOrUpdateFileParams): void {
 
 /** Builds a `FileWriteResult` from a `contents` write response. */
 function writeResultFromContents(
+  ctx: AdapterCtx,
   owner: string,
   repo: string,
   branch: string | undefined,
   path: string,
-  raw: unknown,
+  response: HttpResponse,
   keepFileUrl: boolean,
 ): FileWriteResult {
-  const record = asRecord(raw);
+  const record = asRecord(response.json);
   const commit = asRecord(record.commit);
   const contentUrl = keepFileUrl ? str(asRecord(record.content).html_url) : undefined;
   const result = buildFileWriteResult({
@@ -133,7 +137,7 @@ function writeResultFromContents(
     repo,
     branch,
     paths: [path],
-    commitSha: str(commit.sha) ?? '',
+    commitSha: confirmedSha(ctx.http, response, commit.sha),
     commitHtmlUrl: str(commit.html_url) ?? '',
   });
   if (keepFileUrl) {
@@ -466,11 +470,12 @@ class GitHubAdapter
       body: { message: params.message, sha: params.sha, branch: params.branch },
     });
     return writeResultFromContents(
+      ctx,
       params.owner,
       params.repo,
       params.branch,
       params.path,
-      response.json,
+      response,
       false,
     );
   }
@@ -486,13 +491,11 @@ class GitHubAdapter
       pathParams: { owner, repo, branch: params.branch },
       headers: GITHUB_HEADERS,
     });
-    const commitSha = str(asRecord(asRecord(refResponse.json).object).sha);
-    if (commitSha === undefined) {
-      throw invalidArgumentError(
-        `Cannot resolve branch "${params.branch}": the ref response carried no commit sha.`,
-        'github',
-      );
-    }
+    const commitSha = confirmedSha(
+      ctx.http,
+      refResponse,
+      asRecord(asRecord(refResponse.json).object).sha,
+    );
 
     // 2. Tree of that commit: `base_tree` keeps every file not mentioned below.
     const commitResponse = await ctx.http.request<unknown>({
@@ -501,19 +504,25 @@ class GitHubAdapter
       pathParams: { owner, repo, sha: commitSha },
       headers: GITHUB_HEADERS,
     });
-    const baseTree = str(asRecord(asRecord(commitResponse.json).tree).sha);
-    if (baseTree === undefined) {
-      throw invalidArgumentError(
-        `Cannot resolve the tree of commit ${commitSha}: the commit response carried no tree sha.`,
-        'github',
-      );
-    }
+    const baseTree = confirmedSha(
+      ctx.http,
+      commitResponse,
+      asRecord(asRecord(commitResponse.json).tree).sha,
+    );
 
+    const parentTree = await ctx.http.request({
+      method: 'GET',
+      path: `${REPO_PATH}/git/trees/{sha}`,
+      pathParams: { owner, repo, sha: baseTree },
+      headers: GITHUB_HEADERS,
+      query: { recursive: '1' },
+    });
+    const modes = resolveFileModes(ctx.http, parentTree, entries);
     // Base64 entries need a blob first; a tree entry accepts `sha` or `content`
     // but never both.
     const tree: Record<string, unknown>[] = [];
-    for (const entry of entries) {
-      tree.push(await this.treeEntry(ctx, owner, repo, entry));
+    for (const [index, entry] of entries.entries()) {
+      tree.push(await this.treeEntry(ctx, owner, repo, entry, modes[index]!));
     }
 
     // 3. New tree rooted at the old one.
@@ -523,13 +532,7 @@ class GitHubAdapter
       ...base(owner, repo),
       body: { base_tree: baseTree, tree },
     });
-    const newTree = str(asRecord(treeResponse.json).sha);
-    if (newTree === undefined) {
-      throw invalidArgumentError(
-        'Cannot create the new tree: the tree response carried no sha.',
-        'github',
-      );
-    }
+    const newTree = confirmedSha(ctx.http, treeResponse, asRecord(treeResponse.json).sha);
 
     // 4. The single commit holding every change.
     const newCommitResponse = await ctx.http.request<unknown>({
@@ -539,16 +542,10 @@ class GitHubAdapter
       body: { message: params.message, tree: newTree, parents: [commitSha] },
     });
     const newCommit = asRecord(newCommitResponse.json);
-    const newCommitSha = str(newCommit.sha);
-    if (newCommitSha === undefined) {
-      throw invalidArgumentError(
-        'Cannot create the commit: the commit response carried no sha.',
-        'github',
-      );
-    }
+    const newCommitSha = confirmedSha(ctx.http, newCommitResponse, newCommit.sha);
 
     // 5. Fast-forward the branch to the new commit.
-    await ctx.http.request<unknown>({
+    const updated = await ctx.http.request<unknown>({
       method: 'PATCH',
       path: `${REPO_PATH}/git/refs/heads/{branch}`,
       pathParams: { owner, repo, branch: params.branch },
@@ -556,6 +553,12 @@ class GitHubAdapter
       body: { sha: newCommitSha, force: false },
     });
 
+    if (asRecord(asRecord(updated.json).object).sha !== newCommitSha) {
+      throw ctx.http.invalidResponse(
+        updated,
+        'The provider did not confirm the updated branch tip',
+      );
+    }
     return buildFileWriteResult({
       owner,
       repo,
@@ -597,7 +600,11 @@ class GitHubAdapter
       body: { ref: `refs/heads/${params.name}`, sha },
     });
 
-    const objectSha = str(asRecord(asRecord(response.json).object).sha) ?? sha;
+    const objectSha = confirmedSha(
+      ctx.http,
+      response,
+      asRecord(asRecord(response.json).object).sha,
+    );
     const branch: Branch = {
       provider: 'github',
       owner: params.owner,
@@ -699,17 +706,18 @@ class GitHubAdapter
       headers: GITHUB_HEADERS,
       body: {
         message: params.message,
-        content: params.content,
+        content: contentsBase64(params.content, params.encoding, 'github'),
         branch: params.branch,
         sha: params.sha,
       },
     });
     return writeResultFromContents(
+      ctx,
       params.owner,
       params.repo,
       params.branch,
       params.path,
-      response.json,
+      response,
       true,
     );
   }
@@ -720,16 +728,17 @@ class GitHubAdapter
     owner: string,
     repo: string,
     entry: PushPlanEntry,
+    mode: string,
   ): Promise<Record<string, unknown>> {
     if (entry.action === 'delete') {
       // `sha: null` is GitHub's delete marker; sending `content` alongside it
       // would be rejected.
-      return { path: entry.path, mode: '100644', type: 'blob', sha: null };
+      return { path: entry.path, mode, type: 'blob', sha: null };
     }
     if (entry.encoding === 'utf8') {
       return {
         path: entry.path,
-        mode: '100644',
+        mode,
         type: 'blob',
         content: entry.content,
       };
@@ -741,15 +750,9 @@ class GitHubAdapter
       ...base(owner, repo),
       body: { content: entry.content, encoding: 'base64' },
     });
-    const blobSha = str(asRecord(blobResponse.json).sha);
-    if (blobSha === undefined) {
-      throw invalidArgumentError(
-        `Cannot store blob "${entry.path}": the blob response carried no sha.`,
-        'github',
-      );
-    }
+    const blobSha = confirmedSha(ctx.http, blobResponse, asRecord(blobResponse.json).sha);
     // `sha` and `content` are mutually exclusive on a tree entry.
-    return { path: entry.path, mode: '100644', type: 'blob', sha: blobSha };
+    return { path: entry.path, mode, type: 'blob', sha: blobSha };
   }
 
   /** Reads the commit sha a branch currently points at. */

@@ -665,7 +665,7 @@ describe('github adapter single-file writes', () => {
         owner: 'example-org',
         repo: 'demo-kit',
         path: 'tmp/a.txt',
-        content: 'aGk=',
+        content: 'hi',
         message: 'add a',
         branch: 'dev',
       }),
@@ -743,7 +743,7 @@ describe('github adapter single-file writes', () => {
   });
 });
 
-describe('github adapter pushFiles five-step chain', () => {
+describe('github adapter pushFiles six-step chain', () => {
   const REF_RESPONSE = {
     ref: 'refs/heads/dev',
     object: { sha: 'ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02', type: 'commit' },
@@ -763,9 +763,22 @@ describe('github adapter pushFiles five-step chain', () => {
     object: { sha: 'ab09ab09ab09ab09ab09ab09ab09ab09ab09ab09' },
   };
 
-  /** Routes for the five steps, plus an optional blob create. */
-  function chainRoutes(blobSha?: string): MockRoute[] {
+  /** Routes for the six steps, plus an optional blob create. */
+  const parent = {
+    truncated: false,
+    tree: ['b.txt', 'b64.txt', 'gone.txt', 'untouched'].map((path) => ({
+      path,
+      type: 'blob',
+      mode: path === 'b64.txt' ? '100755' : '100644',
+    })),
+  };
+  function chainRoutes(blobSha?: string, snapshot: unknown = parent): MockRoute[] {
     const routes: MockRoute[] = [
+      {
+        match: `/git/trees/${COMMIT_RESPONSE.tree.sha}?recursive=1`,
+        method: 'GET',
+        responses: [jsonResponse(snapshot)],
+      },
       { match: '/git/ref/heads/dev', method: 'GET', responses: [jsonResponse(REF_RESPONSE)] },
       { match: '/git/commits/ab02ab02', method: 'GET', responses: [jsonResponse(COMMIT_RESPONSE)] },
       {
@@ -790,7 +803,7 @@ describe('github adapter pushFiles five-step chain', () => {
     return routes;
   }
 
-  it('commits utf8 entries in 5 requests and returns the fourth step payload', async () => {
+  it('commits utf8 entries in 6 requests and returns the confirmed commit', async () => {
     const { ctx, mock } = buildHarness(githubAdapter);
     mock.setRoutes(chainRoutes());
 
@@ -808,10 +821,11 @@ describe('github adapter pushFiles five-step chain', () => {
       }),
     );
 
-    expect(mock.calls).toHaveLength(5);
+    expect(mock.calls).toHaveLength(6);
     expect(mock.calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
       'GET /repos/example-org/demo-kit/git/ref/heads/dev',
       'GET /repos/example-org/demo-kit/git/commits/ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02',
+      `GET /repos/example-org/demo-kit/git/trees/${COMMIT_RESPONSE.tree.sha}`,
       'POST /repos/example-org/demo-kit/git/trees',
       'POST /repos/example-org/demo-kit/git/commits',
       'PATCH /repos/example-org/demo-kit/git/refs/heads/dev',
@@ -882,7 +896,7 @@ describe('github adapter pushFiles five-step chain', () => {
     // base64: blob sha, no content.
     expect(body.tree[1]).toEqual({
       path: 'b64.txt',
-      mode: '100644',
+      mode: '100755',
       type: 'blob',
       sha: 'blobsha1',
     });
@@ -897,13 +911,13 @@ describe('github adapter pushFiles five-step chain', () => {
     });
     expect(body.tree[2]?.content).toBeUndefined();
 
-    // One blob per base64 entry: 5 + K.
-    expect(mock.calls).toHaveLength(6);
+    // One blob per base64 entry: 6 + K.
+    expect(mock.calls).toHaveLength(7);
     const blobCall = mock.calls.find((call) => call.url.endsWith('/git/blobs'));
     expect(blobCall?.json).toEqual({ content: 'aGk=', encoding: 'base64' });
   });
 
-  it('scales request count as 5 + K with several base64 entries', async () => {
+  it('scales request count as 6 + K with several base64 entries', async () => {
     const { ctx, mock } = buildHarness(githubAdapter);
     mock.setRoutes(chainRoutes('blobsha'));
 
@@ -922,7 +936,7 @@ describe('github adapter pushFiles five-step chain', () => {
       }),
     );
 
-    expect(mock.calls).toHaveLength(8);
+    expect(mock.calls).toHaveLength(9);
     expect(mock.calls.filter((call) => call.url.endsWith('/git/blobs'))).toHaveLength(3);
   });
 
@@ -955,6 +969,45 @@ describe('github adapter pushFiles five-step chain', () => {
       sha: 'ab09ab09ab09ab09ab09ab09ab09ab09ab09ab09',
       force: false,
     });
+  });
+
+  it.each([
+    [
+      'symlink',
+      { truncated: false, tree: [{ path: 'file', type: 'blob', mode: '120000' }] },
+      'update',
+      'INVALID_ARGUMENT',
+    ],
+    [
+      'submodule',
+      { truncated: false, tree: [{ path: 'file', type: 'commit', mode: '160000' }] },
+      'update',
+      'INVALID_ARGUMENT',
+    ],
+    ['incomplete tree', { truncated: true, tree: [] }, 'create', 'PROVIDER_ERROR'],
+    ['missing update', { truncated: false, tree: [] }, 'update', 'INVALID_ARGUMENT'],
+    [
+      'existing create',
+      { truncated: false, tree: [{ path: 'file', type: 'blob', mode: '100644' }] },
+      'create',
+      'INVALID_ARGUMENT',
+    ],
+  ] as const)('rejects %s before writing objects', async (_name, snapshot, action, code) => {
+    const { ctx, mock } = buildHarness(githubAdapter);
+    mock.setRoutes(chainRoutes(undefined, snapshot));
+    await expect(
+      githubAdapter.pushFiles(
+        ctx,
+        withProvider({
+          owner: 'o',
+          repo: 'r',
+          branch: 'dev',
+          message: 'change',
+          files: [{ path: 'file', action, content: 'hi' }],
+        }),
+      ),
+    ).rejects.toMatchObject({ code });
+    expect(mock.calls.map((c) => c.method)).toEqual(['GET', 'GET', 'GET']);
   });
 
   it('rejects an empty batch, a delete with content and bad base64 before any request', async () => {
@@ -1064,8 +1117,8 @@ describe('github adapter pushFiles five-step chain', () => {
         }),
       ),
     );
-    expect(error.code).toBe('INVALID_ARGUMENT');
-    expect(error.message).toContain('dev');
+    expect(error.code).toBe('PROVIDER_ERROR');
+    expect(error.message).toContain('SHA');
     expect(mock.calls).toHaveLength(1);
   });
 });

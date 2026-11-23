@@ -112,7 +112,18 @@ export function contractRoutes(data: ContractFixtures): MockRoute[] {
   };
 
   return [
-    /* GitHub `pushFiles`: five-step chain plus one blob per base64 entry. */
+    {
+      match: on('GET', /\/git\/trees\/[0-9a-f]+$/),
+      responses: [
+        {
+          body: {
+            truncated: false,
+            tree: ['b.txt', 'c.txt'].map((path) => ({ path, mode: '100644', type: 'blob' })),
+          },
+        },
+      ],
+    },
+    /* GitHub `pushFiles`: six-step chain plus one blob per base64 entry. */
     { match: at(/\/git\/blobs$/), responses: [{ body: { sha: 'd'.repeat(40) } }] },
     { match: at(/\/git\/trees$/), responses: [{ body: { sha: 'b'.repeat(40) } }] },
     {
@@ -127,7 +138,10 @@ export function contractRoutes(data: ContractFixtures): MockRoute[] {
       match: at(/\/git\/ref\/heads\/.+$/),
       responses: [{ body: { object: { sha: 'a'.repeat(40) } } }],
     },
-    { match: at(/\/git\/refs\/heads\/.+$/), responses: [{ body: { ref: 'refs/heads/dev' } }] },
+    {
+      match: at(/\/git\/refs\/heads\/.+$/),
+      responses: [{ body: { ref: 'refs/heads/dev', object: { sha: 'c'.repeat(40) } } }],
+    },
 
     /* File writes, before any read route that could shadow them. */
     { match: on('POST', /\/contents\/.+$/), responses: [{ body: writeBody }] },
@@ -161,6 +175,10 @@ export function contractRoutes(data: ContractFixtures): MockRoute[] {
     { match: at(/\/repos\/[^/]+\/[^/]+$/), responses: [{ body: data.repo }] },
     { match: at(/\/repos$/), responses: [{ body: data.repos }] },
 
+    {
+      match: on('POST', /\/git\/refs$/),
+      responses: [{ body: { object: { sha: 'a'.repeat(40) } } }],
+    },
     /* File reads, branches and commits. */
     { match: at(/\/contents\/.+$/), responses: [{ body: data.contents }] },
     { match: on('POST', /\/branches$/), responses: [{ body: firstEntry(data.branches) }] },

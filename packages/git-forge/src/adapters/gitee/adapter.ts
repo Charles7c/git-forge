@@ -15,6 +15,8 @@
  *   missing file path answers `200 + []` rather than 404, so existence can never
  *   be decided from the status code.
  */
+import type { HttpResponse } from '../../core/http.js';
+import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
 import { collectPages, dedupeBy } from '../../core/paginate.js';
 import type {
@@ -484,7 +486,7 @@ class GiteeAdapter
       paramsIn: 'query',
       body: { sha: params.sha, message: params.message, branch: params.branch },
     });
-    return this.resultFromContents(ctx, params, response.json, false);
+    return this.resultFromContents(ctx, params, response, false);
   }
 
   /**
@@ -525,7 +527,7 @@ class GiteeAdapter
       repo: params.repo,
       branch: params.branch,
       paths: entries.map((entry) => entry.path),
-      commitSha: str(record.sha) ?? '',
+      commitSha: confirmedSha(ctx.http, response, record.sha),
       commitHtmlUrl: str(record.html_url) ?? '',
     });
   }
@@ -566,7 +568,7 @@ class GiteeAdapter
       owner: params.owner,
       repo: params.repo,
       name,
-      commit_sha: str(asRecord(record.commit).sha) ?? '',
+      commit_sha: confirmedSha(ctx.http, response, asRecord(record.commit).sha),
     };
     const isProtected = record.protected;
     if (typeof isProtected === 'boolean') {
@@ -688,13 +690,13 @@ class GiteeAdapter
       path: `${REPO_PATH}/contents/{path}`,
       pathParams: { owner: params.owner, repo: params.repo, path: params.path },
       body: {
-        content: params.content,
+        content: contentsBase64(params.content, params.encoding, 'gitee'),
         message: params.message,
         branch: params.branch,
         sha: params.sha,
       },
     });
-    return this.resultFromContents(ctx, params, response.json, true);
+    return this.resultFromContents(ctx, params, response, true);
   }
 
   /**
@@ -707,12 +709,12 @@ class GiteeAdapter
   private resultFromContents(
     ctx: AdapterCtx,
     params: WithProvider<CreateOrUpdateFileParams> | WithProvider<DeleteFileParams>,
-    raw: unknown,
+    response: HttpResponse,
     keepFileUrl: boolean,
   ): FileWriteResult {
-    const record = asRecord(raw);
+    const record = asRecord(response.json);
     const commit = asRecord(record.commit);
-    const sha = str(commit.sha) ?? '';
+    const sha = confirmedSha(ctx.http, response, commit.sha);
     const webBase = ctx.webBaseUrl.endsWith('/') ? ctx.webBaseUrl.slice(0, -1) : ctx.webBaseUrl;
     const derivedUrl =
       webBase.length > 0 && sha.length > 0
