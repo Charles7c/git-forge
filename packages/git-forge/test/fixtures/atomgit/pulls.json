@@ -1,0 +1,119 @@
+[
+  {
+    "id": 5009,
+    "iid": 403,
+    "project_id": 5010,
+    "url": "https://atomgit.com/api/v5/repos/example-org/demo-kit/pulls/403",
+    "html_url": "https://atomgit.com/example-org/demo-kit/merge_requests/403",
+    "number": 403,
+    "state": "merged",
+    "title": "Add a sample template",
+    "body": "Add a template for the example.",
+    "user": {
+      "id": "ab01ab01ab01ab01ab01ab01",
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "created_at": "2025-04-01T02:03:04+08:00",
+    "updated_at": "2025-04-02T03:04:05+08:00",
+    "closed_at": "2025-04-02T03:04:05+08:00",
+    "merged_at": "2025-04-02T03:04:05+08:00",
+    "mergeable": true,
+    "draft": false,
+    "locked": false,
+    "source_branch": "dev",
+    "target_branch": "dev",
+    "added_lines": 1200,
+    "removed_lines": 30,
+    "notes": 3,
+    "head": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03"
+    },
+    "base": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02"
+    }
+  },
+  {
+    "id": 5008,
+    "iid": 402,
+    "project_id": 5010,
+    "url": "https://atomgit.com/api/v5/repos/example-org/demo-kit/pulls/402",
+    "html_url": "https://atomgit.com/example-org/demo-kit/merge_requests/402",
+    "number": 402,
+    "state": "open",
+    "title": "Fix sample output",
+    "body": null,
+    "user": {
+      "id": "ab01ab01ab01ab01ab01ab01",
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "created_at": "2025-03-01T00:00:00+08:00",
+    "updated_at": "2025-03-05T00:00:00+08:00",
+    "closed_at": null,
+    "merged_at": null,
+    "mergeable": true,
+    "draft": false,
+    "locked": false,
+    "source_branch": "fix/sample",
+    "target_branch": "dev",
+    "added_lines": 40,
+    "removed_lines": 2,
+    "notes": 0,
+    "head": {
+      "label": "example-org:fix/sample",
+      "ref": "fix/sample",
+      "sha": "ab08ab08ab08ab08ab08ab08ab08ab08ab08ab08"
+    },
+    "base": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02"
+    }
+  },
+  {
+    "id": 5007,
+    "iid": 401,
+    "project_id": 5010,
+    "url": "https://atomgit.com/api/v5/repos/example-org/demo-kit/pulls/401",
+    "html_url": "https://atomgit.com/example-org/demo-kit/merge_requests/401",
+    "number": 401,
+    "state": "closed",
+    "title": "Close the draft change",
+    "body": null,
+    "user": {
+      "id": "ab01ab01ab01ab01ab01ab01",
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "created_at": "2025-02-01T00:00:00+08:00",
+    "updated_at": "2025-02-05T00:00:00+08:00",
+    "closed_at": "2025-02-05T00:00:00+08:00",
+    "merged_at": null,
+    "mergeable": false,
+    "draft": true,
+    "locked": false,
+    "source_branch": "chore/sample",
+    "target_branch": "dev",
+    "added_lines": 1,
+    "removed_lines": 1,
+    "notes": 1,
+    "head": {
+      "label": "example-org:chore/sample",
+      "ref": "chore/sample",
+      "sha": "ab0aab0aab0aab0aab0aab0aab0aab0aab0aab0a"
+    },
+    "base": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02"
+    }
+  }
+]

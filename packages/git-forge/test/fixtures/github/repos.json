@@ -1,0 +1,44 @@
+[
+  {
+    "id": 5018,
+    "node_id": "sample-node-14",
+    "name": "demo-kit",
+    "full_name": "example-org/demo-kit",
+    "private": false,
+    "owner": {
+      "login": "example-org",
+      "id": 5100,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "Organization",
+      "site_admin": false
+    },
+    "html_url": "https://github.com/example-org/demo-kit",
+    "description": "A sample project for adapter tests.",
+    "fork": false,
+    "language": "Java",
+    "default_branch": "dev",
+    "created_at": "2022-06-01T00:00:00Z",
+    "updated_at": "2025-05-01T00:00:00Z"
+  },
+  {
+    "id": 5019,
+    "node_id": "sample-node-15",
+    "name": "demo-utils",
+    "full_name": "example-org/demo-utils",
+    "private": false,
+    "owner": {
+      "login": "example-org",
+      "id": 5100,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "Organization",
+      "site_admin": false
+    },
+    "html_url": "https://github.com/example-org/demo-utils",
+    "description": null,
+    "fork": false,
+    "language": "Java",
+    "default_branch": "dev",
+    "created_at": "2023-01-01T00:00:00Z",
+    "updated_at": "2025-04-01T00:00:00Z"
+  }
+]

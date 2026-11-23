@@ -1,0 +1,16 @@
+[
+  {
+    "commit": { "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02" },
+    "default_branch": true,
+    "description": null,
+    "name": "dev",
+    "protected": true
+  },
+  {
+    "commit": { "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03" },
+    "default_branch": false,
+    "description": "example changes",
+    "name": "feat/sample",
+    "protected": false
+  }
+]

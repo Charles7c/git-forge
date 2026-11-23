@@ -1,0 +1,54 @@
+[
+  {
+    "id": 5012,
+    "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/issues/IEXA01",
+    "repository_url": "https://gitee.com/api/v5/repos/example-org/demo-kit",
+    "comments_url": "https://gitee.com/api/v5/repos/example-org/demo-kit/issues/IEXA01/comments",
+    "html_url": "https://gitee.com/example-org/demo-kit/issues/IEXA01",
+    "number": "IEXA01",
+    "state": "open",
+    "issue_state": "待办的",
+    "issue_state_detail": { "title": "待办的", "serial": 0 },
+    "title": "Add a sample greeting",
+    "body": "Add a greeting to the example output.",
+    "user": {
+      "id": 5005,
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "url": "https://gitee.com/api/v5/users/example-author",
+      "html_url": "https://gitee.com/example-author"
+    },
+    "labels": [
+      {
+        "id": 1001,
+        "color": "d73a4a",
+        "name": "bug",
+        "repository_id": 5012,
+        "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/labels/bug"
+      },
+      {
+        "id": 1002,
+        "color": "0075ca",
+        "name": "docs",
+        "repository_id": 5012,
+        "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/labels/docs"
+      }
+    ],
+    "assignees": [
+      {
+        "id": 5005,
+        "login": "example-author",
+        "name": "example-author",
+        "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+      }
+    ],
+    "milestone": null,
+    "comments": 3,
+    "created_at": "2025-01-05T12:34:56+08:00",
+    "updated_at": "2025-02-11T08:09:10+08:00",
+    "finished_at": null,
+    "plan_started_at": null,
+    "deadline": null
+  }
+]

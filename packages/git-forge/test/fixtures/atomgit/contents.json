@@ -1,0 +1,16 @@
+{
+  "_links": {
+    "self": "https://api.atomgit.com/api/v5/repos/example-org/demo-kit/contents/README.md",
+    "html": "https://atomgit.com/example-org/demo-kit/blob/dev/README.md"
+  },
+  "content": "IyBEZW1vIEtpdAo=\n",
+  "download_url": "https://raw.atomgit.com/example-org/demo-kit/blobs/ab04ab04/README.md",
+  "encoding": "base64",
+  "html_url": "https://atomgit.com/example-org/demo-kit/blob/dev/README.md",
+  "name": "README.md",
+  "path": "README.md",
+  "sha": "ab04ab04ab04ab04ab04ab04ab04ab04ab04ab04",
+  "size": 11,
+  "type": "file",
+  "url": "https://api.atomgit.com/api/v5/repos/example-org/demo-kit/contents/README.md"
+}

@@ -1,0 +1,64 @@
+[
+  {
+    "id": 5017,
+    "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/pulls/304",
+    "html_url": "https://gitee.com/example-org/demo-kit/pulls/304",
+    "number": 304,
+    "state": "open",
+    "title": "Add a sample template",
+    "body": "Add a template for the example.",
+    "user": {
+      "id": 5005,
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "created_at": "2025-04-01T02:03:04+08:00",
+    "updated_at": "2025-04-02T03:04:05+08:00",
+    "merged_at": null,
+    "mergeable": true,
+    "draft": false,
+    "head": {
+      "label": "example-org:feat/sample",
+      "ref": "feat/sample",
+      "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+      "repo": { "id": 1, "name": "demo-kit" }
+    },
+    "base": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02",
+      "repo": { "id": 1, "name": "demo-kit" }
+    }
+  },
+  {
+    "id": 5016,
+    "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/pulls/303",
+    "html_url": "https://gitee.com/example-org/demo-kit/pulls/303",
+    "number": 303,
+    "state": "closed",
+    "title": "Fix sample output",
+    "body": null,
+    "user": {
+      "id": 5005,
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "created_at": "2025-03-01T00:00:00+08:00",
+    "updated_at": "2025-03-05T00:00:00+08:00",
+    "merged_at": "2025-03-05T00:00:00+08:00",
+    "mergeable": null,
+    "draft": false,
+    "head": {
+      "label": "example-org:fix/sample",
+      "ref": "fix/sample",
+      "sha": "ab08ab08ab08ab08ab08ab08ab08ab08ab08ab08"
+    },
+    "base": {
+      "label": "example-org:dev",
+      "ref": "dev",
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02"
+    }
+  }
+]

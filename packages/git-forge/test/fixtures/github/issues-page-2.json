@@ -1,0 +1,40 @@
+[
+  {
+    "url": "https://api.github.com/repos/example-org/demo-kit/issues/103",
+    "repository_url": "https://api.github.com/repos/example-org/demo-kit",
+    "html_url": "https://github.com/example-org/demo-kit/issues/103",
+    "id": 5026,
+    "node_id": "sample-node-6",
+    "number": 103,
+    "title": "Correct the sample output",
+    "user": {
+      "login": "example-author",
+      "id": 5001,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "User",
+      "site_admin": false
+    },
+    "labels": [
+      {
+        "id": 5004,
+        "node_id": "sample-node-9",
+        "url": "https://api.github.com/repos/example-org/demo-kit/labels/bug",
+        "name": "bug",
+        "color": "d73a4a",
+        "default": true,
+        "description": "Something is not working"
+      }
+    ],
+    "state": "closed",
+    "locked": false,
+    "assignee": null,
+    "assignees": [],
+    "milestone": null,
+    "comments": 0,
+    "created_at": "2025-03-01T00:00:00Z",
+    "updated_at": "2025-03-02T00:00:00Z",
+    "closed_at": "2025-03-02T00:00:00Z",
+    "author_association": "OWNER",
+    "body": "Duplicate sample entry."
+  }
+]

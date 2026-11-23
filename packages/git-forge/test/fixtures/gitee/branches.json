@@ -1,0 +1,31 @@
+[
+  {
+    "commit": {
+      "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02",
+      "commit": {
+        "author": {
+          "name": "example-author",
+          "email": "author@example.invalid",
+          "date": "2025-04-28T09:30:00+08:00"
+        },
+        "committer": {
+          "name": "example-author",
+          "email": "author@example.invalid",
+          "date": "2025-04-28T09:30:00+08:00"
+        },
+        "message": "Prepare the example files"
+      }
+    },
+    "name": "dev",
+    "protected": false,
+    "protection_url": "https://gitee.com/api/v5/repos/example-org/demo-kit/branches/dev/protection"
+  },
+  {
+    "commit": {
+      "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03"
+    },
+    "name": "feat/sample",
+    "protected": true,
+    "protection_url": "https://gitee.com/api/v5/repos/example-org/demo-kit/branches/feat/sample/protection"
+  }
+]

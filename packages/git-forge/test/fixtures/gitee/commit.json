@@ -1,0 +1,19 @@
+{
+  "url": "https://gitee.com/api/v5/repos/example-org/demo-kit/commits/ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "sha": "ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "html_url": "https://gitee.com/example-org/demo-kit/commit/ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03",
+  "commit": {
+    "author": {
+      "name": "example-author",
+      "email": "author@example.invalid",
+      "date": "2025-05-01T16:00:00+08:00"
+    },
+    "committer": {
+      "name": "example-author",
+      "email": "author@example.invalid",
+      "date": "2025-05-01T16:00:00+08:00"
+    },
+    "message": "Add the second example"
+  },
+  "parents": [{ "sha": "ab02ab02ab02ab02ab02ab02ab02ab02ab02ab02" }]
+}

@@ -1,0 +1,46 @@
+{
+  "url": "https://api.github.com/repos/example-org/demo-kit/issues/101",
+  "repository_url": "https://api.github.com/repos/example-org/demo-kit",
+  "html_url": "https://github.com/example-org/demo-kit/issues/101",
+  "id": 5024,
+  "node_id": "sample-node-5",
+  "number": 101,
+  "title": "Add a sample greeting",
+  "user": {
+    "login": "example-author",
+    "id": 5001,
+    "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+    "type": "User",
+    "site_admin": false
+  },
+  "labels": [
+    {
+      "id": 5002,
+      "node_id": "sample-node-7",
+      "url": "https://api.github.com/repos/example-org/demo-kit/labels/enhancement",
+      "name": "enhancement",
+      "color": "a2eeef",
+      "default": true,
+      "description": "New feature or request"
+    }
+  ],
+  "state": "open",
+  "locked": false,
+  "assignee": null,
+  "assignees": [
+    {
+      "login": "example-author",
+      "id": 5001,
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png",
+      "type": "User",
+      "site_admin": false
+    }
+  ],
+  "milestone": null,
+  "comments": 3,
+  "created_at": "2025-01-05T12:34:56Z",
+  "updated_at": "2025-02-11T08:09:10Z",
+  "closed_at": null,
+  "author_association": "OWNER",
+  "body": "Add a greeting to the example output."
+}

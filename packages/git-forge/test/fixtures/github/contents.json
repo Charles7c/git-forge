@@ -1,0 +1,13 @@
+{
+  "name": "README.md",
+  "path": "README.md",
+  "sha": "ab04ab04ab04ab04ab04ab04ab04ab04ab04ab04",
+  "size": 11,
+  "url": "https://api.github.com/repos/example-org/demo-kit/contents/README.md?ref=dev",
+  "html_url": "https://github.com/example-org/demo-kit/blob/dev/README.md",
+  "git_url": "https://api.github.com/repos/example-org/demo-kit/git/blobs/ab04ab04ab04ab04ab04ab04ab04ab04ab04ab04",
+  "download_url": "https://raw.githubusercontent.com/example-org/demo-kit/dev/README.md",
+  "type": "file",
+  "content": "IyBEZW1vIEtpdAo=\n",
+  "encoding": "base64"
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "id": 5014,
+    "body": "Please include a short example.",
+    "created_at": "2025-01-06T09:00:00+08:00",
+    "updated_at": "2025-01-06T09:30:00+08:00",
+    "user": {
+      "id": 5005,
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "source": null,
+    "target": {
+      "issue": {
+        "id": 5012,
+        "number": "IEXA01",
+        "title": "Add a sample greeting"
+      },
+      "pull_request": null
+    }
+  },
+  {
+    "id": 5015,
+    "body": "Sample change acknowledged.",
+    "created_at": "2025-01-07T09:00:00+08:00",
+    "updated_at": "2025-01-07T09:00:00+08:00",
+    "user": {
+      "id": 5005,
+      "login": "example-author",
+      "name": "example-author",
+      "avatar_url": "https://assets.example.invalid/avatar/sample.png"
+    },
+    "source": null,
+    "target": {
+      "issue": {
+        "id": 5012,
+        "number": "IEXA01",
+        "title": "Add a sample greeting"
+      },
+      "pull_request": null
+    }
+  }
+]

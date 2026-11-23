@@ -1,0 +1,57 @@
+{
+  "name": "@charles7c/git-forge-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server exposing git-forge SDK capabilities across GitHub, Gitee and AtomGit.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "github",
+    "gitee",
+    "atomgit",
+    "git-forge"
+  ],
+  "license": "MIT",
+  "author": "Charles7c",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Charles7c/git-forge.git",
+    "directory": "packages/git-forge-mcp"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "git-forge-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@charles7c/git-forge": "workspace:^",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
