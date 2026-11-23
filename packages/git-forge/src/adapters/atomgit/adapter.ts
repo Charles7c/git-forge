@@ -11,7 +11,7 @@
  * - response `url` fields point at `atomgit.com/api/v5/...`; every
  *   request is built from the configured base URL instead.
  */
-import { collectPullRequests, pullFromResponse } from '../pulls.js';
+import { collectPullRequests, pullFromResponse, requirePullNumber } from '../pulls.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
 import { collectPages } from '../../core/paginate.js';
@@ -42,7 +42,6 @@ import {
   mapPullRequest,
   mapRepository,
   mapRef,
-  requirePullNumber,
   str,
   toAtomGitState,
 } from './map.js';
@@ -270,15 +269,7 @@ class AtomGitAdapter
       path: `${REPO_PATH}/pulls/{number}`,
       pathParams: { ...repoParams(params.owner, params.repo), number: String(params.number) },
     });
-    const number = requirePullNumber(response.json, (message) =>
-      ctx.http.invalidResponse(response, message),
-    );
-    if (number !== params.number) {
-      throw ctx.http.invalidResponse(
-        response,
-        'AtomGit detail returned a different pull request number',
-      );
-    }
+    requirePullNumber(ctx.http, response, response.json, params.number);
     const detail = asRecord(response.json);
     if (mapRef(detail.head) && mapRef(detail.base)) {
       return pullFromResponse(mapPullRequest, ctx, params, response);
@@ -287,9 +278,11 @@ class AtomGitAdapter
     // the bounded list page does not include it.
     const other = await this.findPullRefs(ctx, params);
     return pullFromResponse(mapPullRequest, ctx, params, response, {
-      ...detail,
-      head: mapRef(detail.head) ?? other?.head,
-      base: mapRef(detail.base) ?? other?.base,
+      raw: {
+        ...detail,
+        head: mapRef(detail.head) ?? other?.head,
+        base: mapRef(detail.base) ?? other?.base,
+      },
     });
   }
 
@@ -607,9 +600,8 @@ class AtomGitAdapter
     });
     if (!Array.isArray(response.json))
       throw ctx.http.invalidResponse(response, 'Expected a pull request list');
-    const invalid = (message: string) => ctx.http.invalidResponse(response, message);
     for (const raw of response.json) {
-      if (requirePullNumber(raw, invalid) === params.number) {
+      if (requirePullNumber(ctx.http, response, raw) === params.number) {
         const row = asRecord(raw);
         return { head: mapRef(row.head), base: mapRef(row.base) };
       }

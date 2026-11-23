@@ -35,6 +35,61 @@ describe.each(PROVIDERS)('pull-request contract (%s)', (provider) => {
     });
   });
 
+  it('preserves a positive decimal upstream number, not a different identifier', async () => {
+    const base = { ref: 'main', sha: 'target' };
+    const { client, mock } = buildClient({}, [
+      { match: '/pulls/17', responses: [{ body: { number: '0017', id: 900, base, head: base } }] },
+    ]);
+    await expect(client.getPullRequest({ provider, ...REPO, number: 17 })).resolves.toMatchObject({
+      number: 17,
+      base,
+    });
+    expect(mock.calls).toHaveLength(1);
+  });
+  it('refuses unsafe request numbers before reads or merges', async () => {
+    const { client, mock } = buildClient();
+    const args = { provider, ...REPO, number: Number.MAX_SAFE_INTEGER + 1 };
+    for (const result of [client.getPullRequest(args), client.mergePullRequest(args)]) {
+      await expect(result).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', provider });
+    }
+    expect(mock.calls).toHaveLength(0);
+  });
+  it.each([
+    ['list', undefined, ['GET']],
+    ['create', '17e0', ['POST']],
+    ['detail', 18, ['GET']],
+    ['merge read-back', 18, ['PUT', 'GET']],
+  ] as const)(
+    'rejects an unconfirmed identity on %s with the actual response context',
+    async (method, number, verbs) => {
+      const base = { ref: 'main', sha: 'target' };
+      const row = { number, base, head: base };
+      const payload = {
+        body: method === 'list' ? [row] : row,
+        headers: { 'x-request-id': 'identity-check' },
+      };
+      const { client, mock } = buildClient({}, [
+        { match: '/merge', responses: [{ body: { merged: true } }] },
+        { match: '/pulls', responses: [payload] },
+      ]);
+      const params = { provider, ...REPO, number: 17 };
+      const calls = {
+        list: () => client.listPullRequests(params),
+        create: () =>
+          client.createPullRequest({ ...params, title: 'sample', base: 'main', head: 'topic' }),
+        detail: () => client.getPullRequest(params),
+        'merge read-back': () => client.mergePullRequest(params),
+      };
+      await expect(calls[method]()).rejects.toMatchObject({
+        code: 'PROVIDER_ERROR',
+        provider,
+        status: 200,
+        requestId: 'identity-check',
+      });
+      expect(mock.calls.map((c) => c.method)).toEqual(verbs);
+    },
+  );
+
   it('lists pull requests as normalized models', async () => {
     const { client } = buildClient({}, routes);
     const pulls = await client.listPullRequests({ provider, ...REPO });

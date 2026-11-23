@@ -274,7 +274,9 @@ class GitHubAdapter
       pathParams: { owner: params.owner, repo: params.repo, number: String(params.number) },
       headers: GITHUB_HEADERS,
     });
-    return pullFromResponse(mapPullRequest, ctx, params, response);
+    return pullFromResponse(mapPullRequest, ctx, params, response, {
+      expectedNumber: params.number,
+    });
   }
 
   async createPullRequest(

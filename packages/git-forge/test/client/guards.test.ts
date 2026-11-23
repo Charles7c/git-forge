@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { GitClient } from '../../src/client.js';
-import { CAPABILITY_IDS, PROVIDERS, WRITE_CAPABILITIES } from '../../src/index.js';
+import { GitForgeError, CAPABILITY_IDS, PROVIDERS, WRITE_CAPABILITIES } from '../../src/index.js';
 import type { CapabilityId, Provider } from '../../src/index.js';
-import { jsonResponse } from '../helpers/mockFetch.js';
+import { createMockFetch, jsonResponse } from '../helpers/mockFetch.js';
 import { expectError, expectNoHttp, TEST_TOKEN } from '../helpers/expectError.js';
 import { REPO, buildClient, buildTokenlessClient } from '../helpers/clientHarness.js';
 
@@ -316,6 +316,43 @@ describe('facade wiring', () => {
       () => new GitClient({ github: { token: TEST_TOKEN, webBaseUrl: 'http://github.com' } }),
     ).toThrow(/https:/);
   });
+
+  describe.each(PROVIDERS)('endpoint configuration for %s', (provider) => {
+    it.each(['baseUrl', 'webBaseUrl'] as const)(
+      'identifies the provider without echoing the invalid %s',
+      (field) => {
+        const mock = createMockFetch();
+        for (const url of [TEST_TOKEN, `http://example.invalid/${TEST_TOKEN}`]) {
+          let failure: unknown;
+          try {
+            new GitClient({ [provider]: { [field]: url }, fetch: mock.fetch });
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure).toBeInstanceOf(GitForgeError);
+          expect((failure as GitForgeError).toJSON()).toMatchObject({
+            code: 'INVALID_ARGUMENT',
+            provider,
+          });
+          expect(JSON.stringify(failure)).not.toContain(TEST_TOKEN);
+        }
+        expectNoHttp(mock);
+      },
+    );
+  });
+
+  it.each([undefined, null])(
+    'rejects a missing JavaScript file payload asynchronously (%s)',
+    async (value) => {
+      const { client, mock } = buildClient();
+      const jsClient = client as unknown as { createOrUpdateFile(params?: null): Promise<unknown> };
+      const promise =
+        value === undefined ? jsClient.createOrUpdateFile() : jsClient.createOrUpdateFile(value);
+      expect(promise).toBeInstanceOf(Promise);
+      await expectError(promise, { code: 'INVALID_ARGUMENT' });
+      expectNoHttp(mock);
+    },
+  );
 
   it('rejects an unknown provider before anything else', async () => {
     const { client, mock } = buildClient();

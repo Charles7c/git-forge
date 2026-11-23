@@ -131,6 +131,34 @@ describe('tool-level errors over MCP', () => {
     expect(harness.mock.calls).toHaveLength(0);
   });
 
+  it('exposes a rejected PR identity as a tool error with provider response metadata', async () => {
+    const base = { ref: 'main', sha: 'target' };
+    harness = await connect(undefined, [
+      {
+        match: '/pulls/17',
+        responses: [
+          {
+            body: { base, head: base, number: 'not-a-number' },
+            headers: { 'x-request-id': 'mcp-detail' },
+          },
+        ],
+      },
+    ]);
+    const result = await harness.client.callTool({
+      name: 'git_get_pull_request',
+      arguments: { provider: 'gitee', owner: 'sample', repo: 'demo', number: 17 },
+    });
+    expect(isErrorResult(result)).toBe(true);
+    for (const fragment of [
+      '[PROVIDER_ERROR]',
+      'provider=gitee',
+      'status=200',
+      'requestId=mcp-detail',
+    ])
+      expect(resultText(result)).toContain(fragment);
+    expect(harness.mock.calls).toHaveLength(1);
+  });
+
   it('reports an upstream 404 as NOT_FOUND', async () => {
     harness = await connect({ tokens: { github: 'x' }, readonly: false, configured: ['github'] }, [
       { match: /.*/, responses: [{ status: 404, body: { message: 'Not Found' } }] },

@@ -49,7 +49,6 @@ import {
   assertOptionalPositiveInt,
   assertOptionalString,
   assertParamsObject,
-  assertPositiveInt,
   assertProvider,
   assertPushFilesParams,
   assertRepoRef,
@@ -170,15 +169,24 @@ interface ResolvedProvider {
  * `Authorization` header in cleartext. Loopback hosts are exempt so a test or a
  * local proxy can be pointed at without weakening the rule for real hosts.
  */
-function assertEndpoint(field: string, value: string | undefined): void {
+function assertEndpoint(
+  provider: Provider,
+  field: 'baseUrl' | 'webBaseUrl',
+  value: string | undefined,
+): void {
   if (value === undefined) {
     return;
   }
+  if (typeof value !== 'string')
+    throw invalidArgumentError(`Invalid ${provider}.${field}: expected a URL string`, provider);
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    throw invalidArgumentError(`Invalid \`${field}\`: expected an absolute URL`);
+    throw invalidArgumentError(
+      `Invalid \`${provider}.${field}\`: expected an absolute URL`,
+      provider,
+    );
   }
   const isLoopback =
     parsed.hostname === 'localhost' ||
@@ -187,7 +195,8 @@ function assertEndpoint(field: string, value: string | undefined): void {
     parsed.hostname === '::1';
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback)) {
     throw invalidArgumentError(
-      `Invalid \`${field}\`: must use https: (http: is allowed for localhost only)`,
+      `Invalid \`${provider}.${field}\`: must use https: (http: is allowed for localhost only)`,
+      provider,
     );
   }
 }
@@ -245,7 +254,9 @@ function validateListComments(params: ListCommentsParams): void {
 
 function validateGetPullRequest(params: GetPullRequestParams): void {
   assertRepoRef(params);
-  assertPositiveInt('number', params.number);
+  if (!Number.isSafeInteger(params.number) || params.number <= 0) {
+    throw invalidArgumentError('Invalid `number`: expected a positive safe integer');
+  }
 }
 
 function validateListPullRequests(params: ListPullRequestsParams): void {
@@ -273,8 +284,7 @@ function validateCreateComment(params: CreateCommentParams): void {
 }
 
 function validateMergePullRequest(params: MergePullRequestParams): void {
-  assertRepoRef(params);
-  assertPositiveInt('number', params.number);
+  validateGetPullRequest(params);
   assertOptionalOneOf('merge_method', params.merge_method, ['merge', 'squash', 'rebase']);
   assertOptionalString('commit_title', params.commit_title);
   assertOptionalString('commit_message', params.commit_message);
@@ -575,10 +585,9 @@ export class GitClient {
    * the other would still be blocked correctly.
    */
   createOrUpdateFile(params: ProviderParams<CreateOrUpdateFileParams>): Promise<FileWriteResult> {
-    const capability: CapabilityId = params.sha === undefined ? 'files.create' : 'files.update';
     return this.dispatch(
       'createOrUpdateFile',
-      capability,
+      (p) => (p.sha === undefined ? 'files.create' : 'files.update'),
       params,
       validateCreateOrUpdateFile,
       (p, ctx) =>
@@ -678,8 +687,8 @@ export class GitClient {
     const credentials: ProviderCredentials = options[provider] ?? {};
     const defaults = DEFAULT_ENDPOINTS[provider];
 
-    assertEndpoint(`${provider}.baseUrl`, credentials.baseUrl);
-    assertEndpoint(`${provider}.webBaseUrl`, credentials.webBaseUrl);
+    assertEndpoint(provider, 'baseUrl', credentials.baseUrl);
+    assertEndpoint(provider, 'webBaseUrl', credentials.webBaseUrl);
 
     const baseUrl = trimSlash(credentials.baseUrl ?? defaults.api);
     const webBaseUrl = trimSlash(credentials.webBaseUrl ?? defaults.web);
@@ -732,7 +741,7 @@ export class GitClient {
    * refused call and for a failed request.
    *
    * @param method      Method name, used in validation and read-only messages.
-   * @param capability  Method-level capability the call consumes.
+   * @param capabilityFor  Method-level capability, or a selector evaluated after validation.
    * @param params      Caller payload; `provider` is read from it.
    * @param validate    Parameter validator, run before any other gate.
    * @param run         Adapter call, reached only when every gate passes.
@@ -740,7 +749,7 @@ export class GitClient {
    */
   private async dispatch<TParams extends { provider: Provider }, TResult>(
     method: string,
-    capability: CapabilityId,
+    capabilityFor: CapabilityId | ((params: TParams) => CapabilityId),
     params: TParams,
     validate: (params: TParams) => void,
     run: (params: TParams, ctx: ResolvedProvider) => Promise<TResult>,
@@ -756,6 +765,7 @@ export class GitClient {
       throw withProvider(error, params.provider);
     }
 
+    const capability = typeof capabilityFor === 'function' ? capabilityFor(params) : capabilityFor;
     const ctx = this.providers[params.provider];
 
     // Gate 2: read-only policy, decidable without credentials.

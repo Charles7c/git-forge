@@ -182,14 +182,10 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
     const expected = provider === 'gitee' ? 1 : 6 + 1;
     expect(mock.calls).toHaveLength(expected);
   });
+});
 
+describe.each(['gitee'] as const)('native batch actions (%s)', (provider) => {
   it('sends every entry of a batch to Gitee in one request with text encoding', async () => {
-    if (provider === 'github') {
-      return;
-    }
-    if (provider === 'atomgit') {
-      return;
-    }
     const { client, mock } = buildClient({}, [
       { match: /.*/, responses: [{ body: { sha: COMMIT_SHA, html_url: COMMIT_URL } }] },
     ]);
@@ -211,11 +207,10 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
     expect(body.actions[0]?.encoding).toBe('text');
     expect(body.actions[1]?.encoding).toBe('base64');
   });
+});
 
+describe.each(['github'] as const)('Git tree entries (%s)', (provider) => {
   it('builds GitHub tree entries as content-or-sha, never both', async () => {
-    if (provider !== 'github') {
-      return;
-    }
     const { client, mock } = buildClient({}, [
       { match: /\/git\/blobs$/, responses: [{ body: { sha: 'd'.repeat(40) } }] },
       {
@@ -264,6 +259,10 @@ describe.each(PROVIDERS)('files contract (%s)', (provider) => {
     // `base_tree` guards every file the batch does not mention.
     expect((treeCall?.json as { base_tree: string }).base_tree).toBe('b'.repeat(40));
   });
+});
+
+describe.each(PROVIDERS)('batch validation (%s)', (provider) => {
+  const routes = contractRoutes(loadFixtures(provider));
 
   it('refuses an empty batch on every provider with zero HTTP', async () => {
     const { client, mock } = buildClient({}, routes);

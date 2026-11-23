@@ -1,4 +1,4 @@
-import type { HttpRequestSpec, HttpResponse } from '../core/http.js';
+import type { HttpClient, HttpRequestSpec, HttpResponse } from '../core/http.js';
 import { collectPages } from '../core/paginate.js';
 import type {
   ListPullRequestsParams,
@@ -13,8 +13,37 @@ type Mapper = (
   repo: string,
   raw: unknown,
   base: PullRequestRef,
-  invalidResponse: (message: string) => Error,
+  number: number,
 ) => PullRequest;
+
+/** Parse only positive, safe decimal identities; coercion would also admit booleans and exponents. */
+function decimalPullNumber(value: unknown): number | undefined {
+  const n =
+    typeof value === 'string' && value.length > 0 && !/\D/.test(value) ? Number(value) : value;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
+/** Only AtomGit documents `iid` as an alias. Never infer a number from a global id or the request. */
+export function requirePullNumber(
+  http: HttpClient,
+  response: HttpResponse,
+  raw: unknown,
+  expected?: number,
+): number {
+  const record =
+    raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const iid = http.provider === 'atomgit' ? record.iid : undefined;
+  const n = decimalPullNumber(record.number === undefined ? iid : record.number);
+  if (n === undefined || (iid !== undefined && decimalPullNumber(iid) !== n)) {
+    throw http.invalidResponse(response, 'Pull request is missing a valid, unambiguous number');
+  }
+  if (expected !== undefined && n !== expected) {
+    throw http.invalidResponse(response, 'Detail returned a different pull request number');
+  }
+  return n;
+}
 
 /** Require an actual target ref on every public PR, including list and write results. */
 export function pullFromResponse(
@@ -22,8 +51,10 @@ export function pullFromResponse(
   ctx: AdapterCtx,
   params: RepoRef,
   response: HttpResponse,
-  raw: unknown = response.json,
+  options: { raw?: unknown; expectedNumber?: number } = {},
 ): PullRequest {
+  const raw = 'raw' in options ? options.raw : response.json;
+  const number = requirePullNumber(ctx.http, response, raw, options.expectedNumber);
   const base = (raw as { base?: Partial<PullRequestRef> } | null)?.base;
   if (
     typeof base?.ref !== 'string' ||
@@ -36,9 +67,7 @@ export function pullFromResponse(
       'Pull request response is missing its required base ref or SHA',
     );
   }
-  return map(params.owner, params.repo, raw, { ref: base.ref, sha: base.sha }, (message) =>
-    ctx.http.invalidResponse(response, message),
-  );
+  return map(params.owner, params.repo, raw, { ref: base.ref, sha: base.sha }, number);
 }
 
 /** Page each native state independently. A local filter must not shorten the raw page count. */
@@ -70,7 +99,7 @@ export async function collectPullRequests(
           if (!Array.isArray(raw))
             throw ctx.http.invalidResponse(response, 'Expected a pull request list');
           return raw.map((item: unknown) => ({
-            pull: pullFromResponse(map, ctx, params, response, item),
+            pull: pullFromResponse(map, ctx, params, response, { raw: item }),
             matches: options.matches?.(item) ?? true,
           }));
         },

@@ -218,26 +218,6 @@ export function mapRef(raw: unknown): PullRequestRef | undefined {
   return ref !== undefined && sha !== undefined ? { ref, sha } : undefined;
 }
 
-/** Parse only positive, safe decimal identities; coercion would also admit booleans and exponents. */
-function decimalPullNumber(value: unknown): number | undefined {
-  const n =
-    typeof value === 'string' && value.length > 0 && !/\D/.test(value) ? Number(value) : value;
-  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : undefined;
-}
-
-/** Accept either native spelling, but never choose between two conflicting identities. */
-export function requirePullNumber(
-  raw: unknown,
-  invalidResponse: (message: string) => Error,
-): number {
-  const record = asRecord(raw);
-  const n = decimalPullNumber(record.number === undefined ? record.iid : record.number);
-  if (n === undefined || (record.iid !== undefined && decimalPullNumber(record.iid) !== n)) {
-    throw invalidResponse('AtomGit pull request is missing a valid, unambiguous number');
-  }
-  return n;
-}
-
 /**
  * Maps one AtomGit pull request.
  *
@@ -249,7 +229,7 @@ export function mapPullRequest(
   repo: string,
   raw: unknown,
   base: PullRequestRef,
-  invalidResponse: (message: string) => Error,
+  number: number,
 ): PullRequest {
   const record = asRecord(raw);
   const rawState = str(record.state);
@@ -259,7 +239,7 @@ export function mapPullRequest(
     provider: PROVIDER,
     owner,
     repo,
-    number: requirePullNumber(record, invalidResponse),
+    number,
     title: str(record.title) ?? '',
     state: merged ? 'closed' : mapPullRequestState(rawState),
     merged,

@@ -226,6 +226,7 @@ export function mapPullRequest(
   repo: string,
   raw: unknown,
   base: PullRequestRef,
+  number: number,
 ): PullRequest {
   const record = asRecord(raw);
   const merged = bool(record.merged) ?? str(record.merged_at) !== undefined;
@@ -234,7 +235,7 @@ export function mapPullRequest(
     provider: PROVIDER,
     owner,
     repo,
-    number: num(record.number) ?? Number(str(record.number) ?? 0),
+    number,
     title: str(record.title) ?? '',
     state: merged ? 'closed' : mapPullRequestState(record.state),
     merged,

@@ -271,7 +271,9 @@ class GiteeAdapter
       path: `${REPO_PATH}/pulls/{number}`,
       pathParams: { ...repoParams(params.owner, params.repo), number: String(params.number) },
     });
-    return pullFromResponse(mapPullRequest, ctx, params, response);
+    return pullFromResponse(mapPullRequest, ctx, params, response, {
+      expectedNumber: params.number,
+    });
   }
 
   async createPullRequest(
