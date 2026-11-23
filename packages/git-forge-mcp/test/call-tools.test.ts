@@ -101,6 +101,39 @@ describe('tools/call', () => {
     });
   });
 
+  it.each(['github', 'gitee', 'atomgit'] as const)(
+    'passes the file encoding contract through on %s',
+    async (provider) => {
+      harness = await connect(undefined, [
+        { match: '/contents/', responses: [{ body: { commit: { sha: 'confirmed' } } }] },
+      ]);
+      const args = {
+        provider,
+        owner: 'org',
+        repo: 'project',
+        path: 'docs/readme',
+        message: 'write',
+      };
+      const write = (fields: Record<string, string>) =>
+        harness!.client.callTool({
+          name: 'git_create_or_update_file',
+          arguments: { ...args, ...fields },
+        });
+      expect(isErrorResult(await write({ content: 'bad=', encoding: 'base64' }))).toBe(true);
+      expect(harness.mock.calls).toHaveLength(0);
+      expect(isErrorResult(await write({ content: '雪' }))).toBe(false);
+      expect(isErrorResult(await write({ content: 'AAE=', sha: 'old', encoding: 'base64' }))).toBe(
+        false,
+      );
+      expect(
+        harness.mock.calls.map((c) => [c.method, (c.json as { content: string }).content]),
+      ).toEqual([
+        [provider === 'github' ? 'PUT' : 'POST', '6Zuq'],
+        ['PUT', 'AAE='],
+      ]);
+    },
+  );
+
   it('accepts one push entry but refuses an empty batch before HTTP', async () => {
     const sha = 'c'.repeat(40);
     harness = await connect(

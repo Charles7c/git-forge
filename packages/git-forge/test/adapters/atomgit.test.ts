@@ -730,3 +730,48 @@ describe('atomgit adapter branches and commits', () => {
     expect(single.sha).toBe('ab03ab03ab03ab03ab03ab03ab03ab03ab03ab03');
   });
 });
+
+describe('AtomGit PR detail and conversation links', () => {
+  it.each([true, false])(
+    'recovers a missing base only from the same list row (match=%s)',
+    async (match) => {
+      const { ctx, mock } = buildHarness(atomgitAdapter);
+      const detail = { number: 7, head: { ref: 'feature', sha: 'h' } };
+      const base = { ref: 'dev', sha: 'b' };
+      mock.setRoutes([
+        {
+          match: '/pulls/7',
+          responses: [jsonResponse(detail, { headers: { 'x-request-id': 'pr-id' } })],
+        },
+        { match: '/pulls', responses: [jsonResponse([{ number: match ? 7 : 8, base }])] },
+      ]);
+      const result = atomgitAdapter.getPullRequest(
+        ctx,
+        withProvider({ owner: 'o', repo: 'r', number: 7 }),
+      );
+      if (match) await expect(result).resolves.toMatchObject({ base, head: detail.head });
+      else
+        await expect(result).rejects.toMatchObject({
+          code: 'PROVIDER_ERROR',
+          status: 200,
+          requestId: 'pr-id',
+        });
+      expect(mock.calls).toHaveLength(2);
+    },
+  );
+  it('links listed and created notes to the web merge request, not the API path', async () => {
+    const { ctx, mock } = buildHarness(atomgitAdapter, {
+      webBaseUrl: 'https://forge.example.invalid',
+    });
+    mock.setRoutes([
+      { match: '/pulls/7/comments', method: 'GET', responses: [jsonResponse([{ id: 4 }])] },
+      { match: '/pulls/7/comments', method: 'POST', responses: [jsonResponse({ id: 5 })] },
+    ]);
+    const args = withProvider({ owner: 'o', repo: 'r', number: 7, body: 'note' });
+    const [listed] = await atomgitAdapter.listPullRequestComments(ctx, args);
+    const created = await atomgitAdapter.createPullRequestComment(ctx, args);
+    expect([listed?.html_url, created.html_url]).toEqual(
+      Array(2).fill('https://forge.example.invalid/o/r/merge_requests/7'),
+    );
+  });
+});

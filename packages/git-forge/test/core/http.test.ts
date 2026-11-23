@@ -743,7 +743,7 @@ describe('transport boundaries', () => {
       body: { name: 'draft' },
     });
     const [target, init] = fetch.mock.calls[0]!;
-    const url = new URL(String(target));
+    const url = new URL(target instanceof Request ? target.url : target);
     expect(url.origin).toBe(new URL(baseUrl).origin);
     expect(url.pathname).toBe(`${new URL(baseUrl).pathname}/repos/org/heads/feature/docs`);
     expect(url.searchParams.get('flavor')).toBe('oauth');
@@ -790,35 +790,40 @@ describe('transport boundaries', () => {
   });
 
   it.each([
-    ['GET', 2],
-    ['POST', 1],
-  ] as const)('normalizes interrupted %s bodies', async (method, count) => {
-    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
-      async () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.error(new TypeError(TOKEN));
-            },
-          }),
-          { status: 200, headers: { 'x-request-id': 'body-id' } },
+    ['GET', 2, false],
+    ['POST', 1, false],
+    ['POST', 1, true],
+  ] as const)(
+    'normalizes interrupted %s bodies (%i attempts, writes=%s)',
+    async (method, count, writes) => {
+      const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError(TOKEN));
+              },
+            }),
+            { status: 200, headers: { 'x-request-id': 'body-id' } },
+          ),
         ),
-    );
-    const { client } = buildClient({
-      mock: createMockFetch(),
-      fetch,
-      retry: { maxRetries: 1 },
-      token: TOKEN,
-    });
-    const error = await expectGitForgeError(client.request({ method, path: '/issues' }));
-    expect(error.toJSON()).toMatchObject({
-      code: 'NETWORK_ERROR',
-      status: 200,
-      requestId: 'body-id',
-    });
-    expect(String(error.cause)).not.toContain(TOKEN);
-    expect(fetch).toHaveBeenCalledTimes(count);
-  });
+      );
+      const { client } = buildClient({
+        mock: createMockFetch(),
+        fetch,
+        retry: { maxRetries: 1, writes },
+        token: TOKEN,
+      });
+      const error = await expectGitForgeError(client.request({ method, path: '/issues' }));
+      expect(error.toJSON()).toMatchObject({
+        code: 'NETWORK_ERROR',
+        status: 200,
+        requestId: 'body-id',
+      });
+      expect(String(error.cause)).not.toContain(TOKEN);
+      expect(fetch).toHaveBeenCalledTimes(count);
+    },
+  );
 
   it('rejects non-JSON success but accepts a no-content response', async () => {
     const fetch = vi

@@ -231,8 +231,15 @@ const CALLS: Readonly<
  * otherwise shadow `GET /git/commits/{sha}`.
  */
 const HAPPY_ROUTES = [
+  {
+    match: '/git/trees/' + 'b'.repeat(40),
+    responses: [jsonResponse({ truncated: false, tree: [] })],
+  },
   { match: /\/git\/ref\/heads\//, responses: [jsonResponse({ object: { sha: 'a'.repeat(40) } })] },
-  { match: /\/git\/refs\/heads\//, responses: [jsonResponse({ ref: 'refs/heads/dev' })] },
+  {
+    match: /\/git\/refs\/heads\//,
+    responses: [jsonResponse({ ref: 'refs/heads/dev', object: { sha: 'e'.repeat(40) } })],
+  },
   {
     match: /\/git\/commits\/[0-9a-f]+/,
     responses: [jsonResponse({ sha: 'a'.repeat(40), tree: { sha: 'b'.repeat(40) } })],

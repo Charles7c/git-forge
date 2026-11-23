@@ -13,6 +13,7 @@
  *   read tip, commit and tree; create tree and commit; update the ref
  *   chain, which yields exactly one commit.
  */
+import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
@@ -43,6 +44,7 @@ import {
   mapIssue,
   mapPullRequest,
   mapRepository,
+  normalizeLabels,
   readPushEntries,
   str,
 } from './map.js';
@@ -246,23 +248,20 @@ class GitHubAdapter
     ctx: AdapterCtx,
     params: WithProvider<ListPullRequestsParams>,
   ): Promise<PullRequest[]> {
-    const entries = await collectPages<unknown>(
-      ctx.http,
-      { method: 'GET', path: `${REPO_PATH}/pulls`, ...base(params.owner, params.repo) },
-      {
-        maxPages: params.maxPages,
-        query: {
-          state: params.state,
-          head: params.head,
-          base: params.base,
-          labels: joinLabels(params.labels),
-          milestone: params.milestone,
-        },
-        selectItems: (raw) => asArray(raw),
-        keyOf: (raw) => listKey(asRecord(raw).number),
+    return collectPullRequests(ctx, params, mapPullRequest, {
+      states: [params.state],
+      headers: GITHUB_HEADERS,
+      query: { head: params.head, base: params.base },
+      matches: (entry) => {
+        const record = asRecord(entry);
+        const labels = normalizeLabels(record.labels).map((label) => label.toLowerCase());
+        return (
+          (params.milestone === undefined ||
+            asRecord(record.milestone).number === params.milestone) &&
+          (params.labels ?? []).every((label) => labels.includes(label.toLowerCase()))
+        );
       },
-    );
-    return entries.map((entry) => mapPullRequest(params.owner, params.repo, entry));
+    });
   }
 
   async getPullRequest(
@@ -275,7 +274,7 @@ class GitHubAdapter
       pathParams: { owner: params.owner, repo: params.repo, number: String(params.number) },
       headers: GITHUB_HEADERS,
     });
-    return mapPullRequest(params.owner, params.repo, response.json);
+    return pullFromResponse(mapPullRequest, ctx, params, response);
   }
 
   async createPullRequest(
@@ -294,7 +293,7 @@ class GitHubAdapter
         draft: params.draft,
       },
     });
-    return mapPullRequest(params.owner, params.repo, response.json);
+    return pullFromResponse(mapPullRequest, ctx, params, response);
   }
 
   async mergePullRequest(

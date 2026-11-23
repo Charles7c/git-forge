@@ -123,6 +123,28 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 
 与现有配置合并后重启客户端；即使没有令牌也应能列出 23 个工具。需要读取时，通过客户端私有环境/密钥设置或可信本地启动器，将所需令牌传给**服务进程**。不要假设 GUI 会继承终端环境，也不要在 JSON 中假设 `$GITHUB_TOKEN` 或 `${GITHUB_TOKEN}` 会自动展开，否则传入的可能只是字面字符串。不要提交令牌。看不到工具时检查两个绝对路径及 stderr，stdout 仅承载 MCP 协议。
 
+初始化 MCP 会话后，从客户端发出以下只读 JSON-RPC 请求。示例中的组织和仓库均为虚构名称，请替换为你有权读取的仓库。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "git_list_issues",
+    "arguments": {
+      "provider": "gitee",
+      "owner": "sample-team",
+      "repo": "example-project",
+      "state": "open",
+      "maxPages": 1
+    }
+  }
+}
+```
+
+成功时，将 `result.content[0].text` 解析为 Issue 数组：`number` 是字符串，`labels` 是标签名称列表。如果 `result.isError` 为真，则按错误文本读取，不要将其解析为数组。
+
 ## 分页、重试与错误
 
 列表按页序合并并去重，默认 `maxPages` 为 10（每页请求 100 条），可调小以控制读取量。Gitee 的 open/closed Issue 查询分别对两个原生状态分页。读取遇限流、传输错误或可重试服务端错误时，首次请求后最多重试三次。没有服务端提示时，读取使用带全抖动的指数退避。有效的 `Retry-After`（秒数或 HTTP 日期）指定下次请求的最早时间；所需等待超过 `retry.maxRetryAfterMs`（默认 60 秒）时，SDK 直接返回原错误，不再重试。仅当 GitHub 返回限流响应且剩余配额为零时，才用配额重置时间作为后备提示。默认不重试写请求。用 `git.bulk(items, run, { concurrency: 4 })` 执行多项独立调用，结果保留输入顺序与下标；逐项检查 `{ ok, value }` 或 `{ ok, error }`，成功项不回滚。

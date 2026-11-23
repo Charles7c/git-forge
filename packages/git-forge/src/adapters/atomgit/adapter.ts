@@ -11,6 +11,7 @@
  * - response `url` fields point at `atomgit.com/api/v5/...`; every
  *   request is built from the configured base URL instead.
  */
+import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
 import { collectPages } from '../../core/paginate.js';
@@ -40,6 +41,7 @@ import {
   mapIssue,
   mapPullRequest,
   mapRepository,
+  mapRef,
   str,
   toAtomGitState,
 } from './map.js';
@@ -244,27 +246,14 @@ class AtomGitAdapter
       headFilterUnsupported();
     }
 
-    const entries = await collectPages<unknown>(
-      ctx.http,
-      {
-        method: 'GET',
-        path: `${REPO_PATH}/pulls`,
-        pathParams: repoParams(params.owner, params.repo),
+    return collectPullRequests(ctx, params, mapPullRequest, {
+      states: params.state === 'closed' ? ['closed', 'merged'] : [params.state],
+      query: {
+        base: params.base,
+        labels: joinLabels(params.labels),
+        milestone_number: params.milestone,
       },
-      {
-        maxPages: params.maxPages,
-        query: {
-          state: params.state,
-          base: params.base,
-          labels: joinLabels(params.labels),
-          // AtomGit's pull-request filter is `milestone_number`, unlike issues.
-          milestone_number: params.milestone,
-        },
-        selectItems: (raw) => asArray(raw),
-        keyOf: (raw) => listKey(asRecord(raw).number),
-      },
-    );
-    return entries.map((entry) => mapPullRequest(params.owner, params.repo, entry));
+    });
   }
 
   /**
@@ -280,23 +269,19 @@ class AtomGitAdapter
       path: `${REPO_PATH}/pulls/{number}`,
       pathParams: { ...repoParams(params.owner, params.repo), number: String(params.number) },
     });
-    const detail = mapPullRequest(params.owner, params.repo, response.json);
-    if (detail.head !== undefined) {
-      return detail;
+    const detail = asRecord(response.json);
+    if (mapRef(detail.head) && mapRef(detail.base)) {
+      return pullFromResponse(mapPullRequest, ctx, params, response);
     }
-
-    // A single page bounds the fallback cost even on large repositories.
-    const heads = await this.headIndex(ctx, params.owner, params.repo);
-    const backfilled = heads.get(detail.number);
-    if (backfilled === undefined || backfilled.head === undefined) {
-      // Absent in the list too: leave it absent rather than invent a ref.
-      return detail;
-    }
-    return {
+    // Only the same PR may supply a missing ref. Do not invent either ref if
+    // the bounded list page does not include it.
+    const index = await this.headIndex(ctx, params.owner, params.repo);
+    const other = index.get(params.number);
+    return pullFromResponse(mapPullRequest, ctx, params, response, {
       ...detail,
-      head: backfilled.head,
-      base: detail.base ?? backfilled.base,
-    };
+      head: mapRef(detail.head) ?? other?.head,
+      base: mapRef(detail.base) ?? other?.base,
+    });
   }
 
   async createPullRequest(
@@ -315,7 +300,7 @@ class AtomGitAdapter
         draft: params.draft,
       },
     });
-    return mapPullRequest(params.owner, params.repo, response.json);
+    return pullFromResponse(mapPullRequest, ctx, params, response);
   }
 
   async mergePullRequest(
@@ -345,7 +330,7 @@ class AtomGitAdapter
       ctx.webBaseUrl,
       params.owner,
       params.repo,
-      'pulls',
+      'merge_requests',
       params.number,
     );
     // AtomGit's PR comments live under `/merge_requests/{n}/notes` in the UI but
@@ -361,7 +346,7 @@ class AtomGitAdapter
       ctx.webBaseUrl,
       params.owner,
       params.repo,
-      'pulls',
+      'merge_requests',
       params.number,
     );
     return this.createComment(ctx, params, `${REPO_PATH}/pulls/{number}/comments`, parentUrl);
@@ -629,8 +614,8 @@ class AtomGitAdapter
 
     const index = new Map<number, { head?: PullRequest['head']; base?: PullRequest['base'] }>();
     for (const entry of entries) {
-      const mapped = mapPullRequest(owner, repo, entry);
-      index.set(mapped.number, { head: mapped.head, base: mapped.base });
+      const raw = asRecord(entry);
+      index.set(Number(raw.number ?? raw.iid), { head: mapRef(raw.head), base: mapRef(raw.base) });
     }
     return index;
   }

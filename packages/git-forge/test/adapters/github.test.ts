@@ -298,11 +298,32 @@ describe('github adapter pull requests', () => {
     expect(result[1]?.merged_at).toBe('2025-03-05T00:00:00Z');
   });
 
-  it('forwards head, base and milestone filters', async () => {
+  it('forwards native filters and selects actual label/milestone matches across pages', async () => {
     const { ctx, mock } = buildHarness(githubAdapter);
-    mock.setRoutes([{ match: '/pulls', responses: [jsonResponse([])] }]);
+    const baseRef = { ref: 'dev', sha: 'pinned' };
+    mock.setRoutes([
+      {
+        match: '/pulls',
+        responses: [
+          jsonResponse([{ number: 1, base: baseRef, labels: [], milestone: { number: 2 } }], {
+            headers: { total_page: '2' },
+          }),
+          jsonResponse([
+            {
+              number: 2,
+              base: baseRef,
+              labels: [{ name: 'bug' }, { name: 'docs' }],
+              milestone: { number: 2 },
+              merged_at: '2025-01-01T00:00:00Z',
+            },
+            { number: 3, base: baseRef, labels: [{ name: 'bug' }], milestone: { number: 2 } },
+            { number: 4, base: baseRef, labels: ['bug', 'docs'], milestone: { number: 1 } },
+          ]),
+        ],
+      },
+    ]);
 
-    await githubAdapter.listPullRequests(
+    const result = await githubAdapter.listPullRequests(
       ctx,
       withProvider<ListPullRequestsParams>({
         owner: 'o',
@@ -310,15 +331,22 @@ describe('github adapter pull requests', () => {
         head: 'example-org:feat',
         base: 'dev',
         milestone: 2,
-        labels: ['bug'],
+        labels: ['bug', 'docs'],
       }),
     );
 
     const url = new URL(mock.calls[0]?.url ?? '');
     expect(url.searchParams.get('head')).toBe('example-org:feat');
     expect(url.searchParams.get('base')).toBe('dev');
-    expect(url.searchParams.get('milestone')).toBe('2');
-    expect(url.searchParams.get('labels')).toBe('bug');
+    expect(url.searchParams.has('milestone')).toBe(false);
+    expect(url.searchParams.has('labels')).toBe(false);
+    expect(result.map((pull) => pull.number)).toEqual([2]);
+    expect(result[0]).toMatchObject({
+      state: 'closed',
+      merged: true,
+      merged_at: '2025-01-01T00:00:00Z',
+    });
+    expect(mock.calls).toHaveLength(2);
   });
 
   it('reads one pull request', async () => {
@@ -1008,6 +1036,33 @@ describe('github adapter pushFiles six-step chain', () => {
       ),
     ).rejects.toMatchObject({ code });
     expect(mock.calls.map((c) => c.method)).toEqual(['GET', 'GET', 'GET']);
+  });
+
+  it('surfaces a rejected non-fast-forward without replaying the branch update', async () => {
+    const { ctx, mock } = buildHarness(githubAdapter);
+    mock.setRoutes([
+      {
+        match: '/git/refs/heads/dev',
+        method: 'PATCH',
+        responses: [jsonResponse({ message: 'Not a fast forward' }, { status: 422 })],
+      },
+      ...chainRoutes(),
+    ]);
+    await expect(
+      githubAdapter.pushFiles(
+        ctx,
+        withProvider({
+          owner: 'o',
+          repo: 'r',
+          branch: 'dev',
+          message: 'change',
+          files: [{ path: 'b.txt', action: 'update', content: 'new' }],
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    const updates = mock.calls.filter((call) => call.method === 'PATCH');
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.json).toMatchObject({ force: false });
   });
 
   it('rejects an empty batch, a delete with content and bad base64 before any request', async () => {

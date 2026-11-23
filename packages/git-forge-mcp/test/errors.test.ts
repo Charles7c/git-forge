@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { formatError, toErrorResult, wrap } from '../src/errors.js';
 import { GitForgeError } from '@charles7c/git-forge';
@@ -13,17 +13,6 @@ import type { McpHarness } from './helpers/mcpHarness.js';
  * with it.
  */
 describe('error formatting', () => {
-  // `toErrorResult` writes an unexpected-error stack to stderr by design; these
-  // two cases exercise exactly that path, so the write is expected, not noise
-  // from a broken test.
-  const realStderrWrite = process.stderr.write.bind(process.stderr);
-  const silenceStderr = (): void => {
-    process.stderr.write = () => true;
-  };
-  const restoreStderr = (): void => {
-    process.stderr.write = realStderrWrite;
-  };
-
   it('renders a code, provider and message for a GitForgeError', () => {
     const error = new GitForgeError({
       code: 'AUTH_MISSING',
@@ -64,9 +53,14 @@ describe('error formatting', () => {
   });
 
   it('wraps a non-GitForgeError as INTERNAL without leaking a stack', () => {
-    silenceStderr();
-    const result = toErrorResult(new TypeError('boom'));
-    restoreStderr();
+    const stderr = vi.spyOn(process.stderr, 'write');
+    const result = toErrorResult(new TypeError('synthetic diagnostic value'));
+    try {
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(resultText(result)).not.toContain('synthetic diagnostic value');
 
     expect(result.isError).toBe(true);
     const text = resultText(result);
@@ -76,9 +70,7 @@ describe('error formatting', () => {
   });
 
   it('never rejects from wrap', async () => {
-    silenceStderr();
     const result = await wrap(() => Promise.reject(new Error('async failure')));
-    restoreStderr();
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain('[INTERNAL]');
   });

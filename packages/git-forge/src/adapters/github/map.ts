@@ -221,12 +221,16 @@ export function mapRef(raw: unknown): PullRequestRef | undefined {
  *
  * Preserve branch references supplied by the provider; never invent a missing ref.
  */
-export function mapPullRequest(owner: string, repo: string, raw: unknown): PullRequest {
+export function mapPullRequest(
+  owner: string,
+  repo: string,
+  raw: unknown,
+  base: PullRequestRef,
+): PullRequest {
   const record = asRecord(raw);
-  const merged = bool(record.merged) === true;
-  const draft: Omit<PullRequest, 'base'> & {
-    base?: PullRequestRef;
-  } = {
+  const merged = bool(record.merged) ?? str(record.merged_at) !== undefined;
+  const draft: PullRequest = {
+    base,
     provider: PROVIDER,
     owner,
     repo,
@@ -242,10 +246,6 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
   const head = mapRef(record.head);
   if (head !== undefined) {
     draft.head = head;
-  }
-  const base = mapRef(record.base);
-  if (base !== undefined) {
-    draft.base = base;
   }
   const mergedAt = str(record.merged_at);
   if (mergedAt !== undefined) {
@@ -273,7 +273,7 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
       draft[key] = value;
     }
   }
-  return draft as PullRequest;
+  return draft;
 }
 
 /** Maps one GitHub repository. */

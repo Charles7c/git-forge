@@ -224,13 +224,17 @@ export function mapRef(raw: unknown): PullRequestRef | undefined {
  * `html_url` is kept verbatim: AtomGit serves pull requests at
  * `/merge_requests/<n>`, and rewriting that path would produce a 404.
  */
-export function mapPullRequest(owner: string, repo: string, raw: unknown): PullRequest {
+export function mapPullRequest(
+  owner: string,
+  repo: string,
+  raw: unknown,
+  base: PullRequestRef,
+): PullRequest {
   const record = asRecord(raw);
   const rawState = str(record.state);
   const merged = rawState === 'merged' || str(record.merged_at) !== undefined;
-  const draft: Omit<PullRequest, 'base'> & {
-    base?: PullRequestRef;
-  } = {
+  const draft: PullRequest = {
+    base,
     provider: PROVIDER,
     owner,
     repo,
@@ -246,10 +250,6 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
   const head = mapRef(record.head);
   if (head !== undefined) {
     draft.head = head;
-  }
-  const base = mapRef(record.base);
-  if (base !== undefined) {
-    draft.base = base;
   }
   const mergedAt = str(record.merged_at);
   if (mergedAt !== undefined) {
@@ -284,7 +284,7 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
   if (changedFiles !== undefined) {
     draft.changed_files = changedFiles;
   }
-  return draft as PullRequest;
+  return draft;
 }
 
 /**
@@ -493,7 +493,7 @@ export function deriveParentHtmlUrl(
   webBaseUrl: string,
   owner: string,
   repo: string,
-  kind: 'issues' | 'pulls',
+  kind: 'issues' | 'merge_requests',
   number: string | number,
 ): string | undefined {
   const base = webBaseUrl.endsWith('/') ? webBaseUrl.slice(0, -1) : webBaseUrl;

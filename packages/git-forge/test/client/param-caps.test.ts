@@ -117,18 +117,20 @@ describe('pulls.list.headFilter gate', () => {
 });
 
 describe('milestone filter gates', () => {
-  it.each(PROVIDERS)('passes a pull-request milestone through on %s', async (provider) => {
-    const { client, mock } = buildClient({}, [
-      { match: /\/pulls/, responses: [jsonResponse(PULL_FIXTURE)] },
-    ]);
-    await client.listPullRequests({ provider, ...REPO, milestone: 7 });
+  it.each(PROVIDERS)(
+    'uses native pull-request milestone queries only where supported on %s',
+    async (provider) => {
+      const { client, mock } = buildClient({}, [
+        { match: /\/pulls/, responses: [jsonResponse(PULL_FIXTURE)] },
+      ]);
+      await client.listPullRequests({ provider, ...REPO, milestone: 7 });
 
-    const query = new URL(mock.calls[0]!.url).searchParams;
-    // Gitee and AtomGit name the pull-request filter `milestone_number`;
-    // GitHub calls it `milestone`.
-    const key = provider === 'github' ? 'milestone' : 'milestone_number';
-    expect(query.get(key)).toBe('7');
-  });
+      const query = new URL(mock.calls[0]!.url).searchParams;
+      // GitHub selects locally; the other two have a native filter.
+      expect(query.get('milestone_number')).toBe(provider === 'github' ? null : '7');
+      expect(query.has('milestone')).toBe(false);
+    },
+  );
 
   it('passes an issue milestone through on GitHub and AtomGit', async () => {
     const issue = [

@@ -20,6 +20,21 @@ describe.each(PROVIDERS)('pull-request contract (%s)', (provider) => {
   // contract does not require them to.
   const fixtureNumber = (data.pull as { number: number }).number;
 
+  it('rejects a list row without a required base and retains response context', async () => {
+    const { client } = buildClient({}, [
+      {
+        match: '/pulls',
+        responses: [{ body: [{ number: 1 }], headers: { 'x-request-id': 'base-id' } }],
+      },
+    ]);
+    await expect(client.listPullRequests({ provider, ...REPO })).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+      provider,
+      status: 200,
+      requestId: 'base-id',
+    });
+  });
+
   it('lists pull requests as normalized models', async () => {
     const { client } = buildClient({}, routes);
     const pulls = await client.listPullRequests({ provider, ...REPO });
@@ -150,4 +165,44 @@ describe.each(PROVIDERS)('pull-request contract (%s)', (provider) => {
       status: 404,
     });
   });
+});
+
+describe.each(['gitee', 'atomgit'] as const)('native PR states (%s)', (provider) => {
+  it.each([
+    ['open', [1], ['open']],
+    ['closed', [2, 3], ['closed', 'merged']],
+    ['all', [1, 2, 3], ['all']],
+  ] as const)(
+    'normalizes and deduplicates %s within per-stream page limits',
+    async (state, numbers, streams) => {
+      const row = (number: number, native: string) => ({
+        number,
+        state: native,
+        base: { ref: 'main', sha: 'tip' },
+      });
+      const open = row(1, 'open'),
+        closed = row(2, 'closed'),
+        merged = row(3, 'merged');
+      const { client, mock } = buildClient(
+        {},
+        Object.entries({
+          open: [open],
+          closed: [closed, row(3, 'closed')],
+          merged: [merged, merged],
+          all: [open, closed, merged],
+        }).map(([key, body]) => ({
+          match: `state=${key}`,
+          responses: [{ body, headers: { total_page: '2' } }],
+        })),
+      );
+      const result = await client.listPullRequests({ provider, ...REPO, state, maxPages: 1 });
+      expect(result.map((p) => p.number)).toEqual(numbers);
+      expect(result.filter((p) => p.merged).map((p) => [p.number, p.state])).toEqual(
+        state === 'open' ? [] : [[3, 'closed']],
+      );
+      expect(mock.calls.map((call) => new URL(call.url).searchParams.get('state'))).toEqual(
+        streams,
+      );
+    },
+  );
 });

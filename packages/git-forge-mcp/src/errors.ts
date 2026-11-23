@@ -10,8 +10,7 @@
  * - a `GitForgeError` keeps its `code` and provider context in the text, since
  *   those are what the model needs to decide whether to retry, ask for a token,
  *   or give up;
- * - an unexpected error is reported as `INTERNAL` with its stack written to
- *   stderr only, never to the model.
+ * - an unexpected error is reported as `INTERNAL` without emitting untrusted details.
  */
 import { isGitForgeError } from '@charles7c/git-forge';
 import type { GitForgeError } from '@charles7c/git-forge';
@@ -117,23 +116,17 @@ function restartHint(error: GitForgeError): string | undefined {
 /**
  * Turns any thrown value into an MCP error result.
  *
- * Never throws: an unexpected failure is reported as `INTERNAL` and its stack
- * goes to stderr, because a stack trace in a tool result tells the model nothing
- * useful and may carry request details.
+ * Never print an unexpected exception: even its name, stack or cause may contain credentials.
  */
 export function toErrorResult(error: unknown): ToolResult {
   if (isGitForgeError(error)) {
     return { isError: true, content: [{ type: 'text', text: formatError(error) }] };
   }
 
-  const name = error instanceof Error ? error.name : typeof error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof Error && error.stack !== undefined) {
-    process.stderr.write(`[git-forge-mcp] unexpected error: ${error.stack}\n`);
-  }
+  const kind = error instanceof TypeError ? 'TypeError' : 'internal failure';
   return {
     isError: true,
-    content: [{ type: 'text', text: `[INTERNAL] Unexpected error (${name}): ${message}` }],
+    content: [{ type: 'text', text: `[INTERNAL] Unexpected error (${kind})` }],
   };
 }
 

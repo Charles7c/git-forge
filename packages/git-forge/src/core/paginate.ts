@@ -12,7 +12,7 @@
  * raising an error*, which is the worst possible failure: the caller gets a
  * short list and believes it is complete. Hence the ordered fallbacks.
  */
-import type { HttpClient, HttpRequestSpec } from './http.js';
+import type { HttpClient, HttpRequestSpec, HttpResponse } from './http.js';
 import type { ListOptions } from './types.js';
 
 /** Default page size. Hard-capped at the platforms' documented maximum. */
@@ -211,7 +211,7 @@ export interface CollectOptions<T> extends ListOptions {
   /** Page size; clamped to `[1, 100]`. */
   perPage?: number;
   /** Extracts the array of items from a page body. */
-  selectItems: (raw: unknown, ctx: { page: number }) => T[];
+  selectItems: (raw: unknown, ctx: { page: number; response: HttpResponse }) => T[];
   /** Identity used for cross-page deduplication. */
   keyOf: (item: T) => string;
   /** Query parameters merged into every page request. */
@@ -249,7 +249,7 @@ export async function collectPages<T>(
       },
     });
 
-    const items = options.selectItems(response.json, { page });
+    const items = options.selectItems(response.json, { page, response });
     collected.push(...items);
 
     const hasNext = resolveNextPage({

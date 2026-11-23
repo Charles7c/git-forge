@@ -374,6 +374,7 @@ export function errorFromNetwork(params: {
   secrets?: readonly string[];
   timeoutMs?: number;
   response?: Response;
+  retryable?: boolean;
 }): GitForgeError {
   const { provider, context, cause, secrets, timeoutMs } = params;
   const reason = describeNetworkCause(cause, timeoutMs);
@@ -383,7 +384,7 @@ export function errorFromNetwork(params: {
     requestId: extractRequestId(params.response?.headers),
     message: `${context} failed: ${reason} (${describeProvider(provider)})`,
     provider,
-    retryable: true,
+    retryable: params.retryable ?? true,
     cause,
     secrets,
   });

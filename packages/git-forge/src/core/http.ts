@@ -11,6 +11,7 @@ import {
   extractRequestId,
   GitForgeError,
   invalidArgumentError,
+  isRateLimitResponse,
 } from './errors.js';
 import { assertFilePath, assertPathSegment } from './validate.js';
 import { REDACTED, redactUrl, scrubSecrets } from './redact.js';
@@ -286,17 +287,20 @@ export class HttpClient {
       });
       text = await response.text();
     } catch (cause) {
-      return {
-        kind: 'failure',
-        error: errorFromNetwork({
-          provider: this.provider,
-          context,
-          cause,
-          secrets,
-          response,
-          timeoutMs: this.timeoutMs,
-        }),
-      };
+      const unconfirmedWrite = spec.method !== 'GET' && response?.ok === true;
+      const error = errorFromNetwork({
+        provider: this.provider,
+        context,
+        cause,
+        secrets,
+        response,
+        timeoutMs: this.timeoutMs,
+        retryable: !unconfirmedWrite,
+      });
+      // A successful write may already have committed. Even an opt-in retry of
+      // rejected writes must not duplicate one with a lost acknowledgement.
+      if (unconfirmedWrite) throw error;
+      return { kind: 'failure', error, retryAfterMs: response && this.serverDelay(response) };
     }
 
     let json: unknown;
@@ -307,6 +311,9 @@ export class HttpClient {
         if (response.ok) throw this.invalidResponse(response, 'Expected a JSON response');
       }
     }
+    if (!text.length && response.ok && response.status !== 204 && response.status !== 205) {
+      throw this.invalidResponse(response, 'Expected a JSON response');
+    }
     if (!response.ok) {
       const error = errorFromResponse({
         provider: this.provider,
@@ -316,19 +323,20 @@ export class HttpClient {
         context,
         secrets,
       });
-      // Reset headers accompany ordinary GitHub traffic too. Only a quota failure
-      // can use that fallback; Retry-After itself applies across all providers.
-      const retryAfterMs =
-        this.provider === 'github' && error.code === 'RATE_LIMITED'
-          ? retryAfterFromHeaders(response.headers)
-          : parseRetryAfter(response.headers.get('retry-after'));
-      return { kind: 'failure', error, retryAfterMs };
+      return { kind: 'failure', error, retryAfterMs: this.serverDelay(response) };
     }
 
     return {
       kind: 'response',
       response: { status: response.status, headers: response.headers, json: json as T },
     };
+  }
+
+  /** Honor delay headers even if reading the response body failed. */
+  private serverDelay(response: Response): number | undefined {
+    return this.provider === 'github' && isRateLimitResponse(response.status, response.headers)
+      ? retryAfterFromHeaders(response.headers)
+      : parseRetryAfter(response.headers.get('retry-after'));
   }
 
   /**
@@ -338,7 +346,12 @@ export class HttpClient {
    * function's return value and never reaches a message on its own.
    */
   private buildUrl(spec: HttpRequestSpec): string {
-    const path = substitutePath(spec.path, spec.pathParams);
+    let path: string;
+    try {
+      path = substitutePath(spec.path, spec.pathParams);
+    } catch {
+      throw invalidArgumentError('Invalid request path or path parameter', this.provider);
+    }
     const url = new URL(this.#base.href);
     const prefix = stripTrailingSlash(this.#base.pathname);
     url.pathname = prefix + path;

@@ -123,6 +123,28 @@ Use an absolute path to Node and the **installed** MCP entry. From your applicat
 
 Merge the entry with existing settings and restart the client. Expect 23 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the two paths and stderr; stdout is for MCP only.
 
+After initializing an MCP session, send this read-only JSON-RPC request from the client. The names below are fictional; replace them with a repository you are authorized to read.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "git_list_issues",
+    "arguments": {
+      "provider": "gitee",
+      "owner": "sample-team",
+      "repo": "example-project",
+      "state": "open",
+      "maxPages": 1
+    }
+  }
+}
+```
+
+On success, parse `result.content[0].text` as a JSON array of issues. Each `number` is a string; `labels` contains names. If `result.isError` is true, read the text as an error instead.
+
 ## Paging, retries and errors
 
 List methods aggregate in page order and deduplicate. Default `maxPages` is 10 (100 items requested per page); use a smaller limit to bound work. Gitee open/closed issue queries page two native states separately. Reads retry rate limits, transport failures and retryable server errors up to three times after the first attempt. Without a server hint, reads use exponential backoff with full jitter. A valid `Retry-After` (seconds or HTTP-date) sets the earliest next attempt. If the required wait exceeds `retry.maxRetryAfterMs` (60 s by default), the SDK returns the original error without retrying. A GitHub quota reset is a fallback only for a rate-limited response with zero remaining quota. Writes do not retry by default. For multiple independent calls, `git.bulk(items, run, { concurrency: 4 })` retains input order and index: inspect each `{ ok, value }` or `{ ok, error }`. Successful items are not rolled back.

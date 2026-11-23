@@ -15,6 +15,7 @@
  *   missing file path answers `200 + []` rather than 404, so existence can never
  *   be decided from the status code.
  */
+import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
@@ -250,28 +251,15 @@ class GiteeAdapter
     ctx: AdapterCtx,
     params: WithProvider<ListPullRequestsParams>,
   ): Promise<PullRequest[]> {
-    const entries = await collectPages<unknown>(
-      ctx.http,
-      {
-        method: 'GET',
-        path: `${REPO_PATH}/pulls`,
-        pathParams: repoParams(params.owner, params.repo),
+    return collectPullRequests(ctx, params, mapPullRequest, {
+      states: params.state === 'closed' ? ['closed', 'merged'] : [params.state],
+      query: {
+        head: params.head,
+        base: params.base,
+        labels: joinLabels(params.labels),
+        milestone_number: params.milestone,
       },
-      {
-        maxPages: params.maxPages,
-        query: {
-          state: params.state,
-          head: params.head,
-          base: params.base,
-          labels: joinLabels(params.labels),
-          // Gitee's pull-request list calls the numeric filter `milestone_number`.
-          milestone_number: params.milestone,
-        },
-        selectItems: (raw) => asArray(raw),
-        keyOf: (raw) => listKey(asRecord(raw).number),
-      },
-    );
-    return entries.map((entry) => mapPullRequest(params.owner, params.repo, entry));
+    });
   }
 
   async getPullRequest(
@@ -283,7 +271,7 @@ class GiteeAdapter
       path: `${REPO_PATH}/pulls/{number}`,
       pathParams: { ...repoParams(params.owner, params.repo), number: String(params.number) },
     });
-    return mapPullRequest(params.owner, params.repo, response.json);
+    return pullFromResponse(mapPullRequest, ctx, params, response);
   }
 
   async createPullRequest(
@@ -302,7 +290,7 @@ class GiteeAdapter
         draft: params.draft,
       },
     });
-    return mapPullRequest(params.owner, params.repo, response.json);
+    return pullFromResponse(mapPullRequest, ctx, params, response);
   }
 
   async mergePullRequest(

@@ -225,14 +225,18 @@ export function mapRef(raw: unknown): PullRequestRef | undefined {
  * `merged` comes from `merged_at`: Gitee does not send a boolean. A merged pull
  * request is reported as `closed` so the contract stays binary.
  */
-export function mapPullRequest(owner: string, repo: string, raw: unknown): PullRequest {
+export function mapPullRequest(
+  owner: string,
+  repo: string,
+  raw: unknown,
+  base: PullRequestRef,
+): PullRequest {
   const record = asRecord(raw);
   const mergedAt = str(record.merged_at);
   const state = str(record.state);
   const merged = mergedAt !== undefined || state === 'merged';
-  const draft: Omit<PullRequest, 'base'> & {
-    base?: PullRequestRef;
-  } = {
+  const draft: PullRequest = {
+    base,
     provider: PROVIDER,
     owner,
     repo,
@@ -248,10 +252,6 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
   const head = mapRef(record.head);
   if (head !== undefined) {
     draft.head = head;
-  }
-  const base = mapRef(record.base);
-  if (base !== undefined) {
-    draft.base = base;
   }
   if (mergedAt !== undefined) {
     draft.merged_at = mergedAt;
@@ -278,7 +278,7 @@ export function mapPullRequest(owner: string, repo: string, raw: unknown): PullR
       draft[key] = value;
     }
   }
-  return draft as PullRequest;
+  return draft;
 }
 
 /** Strips the `.git` suffix Gitee puts on `html_url` (it is a clone URL). */
