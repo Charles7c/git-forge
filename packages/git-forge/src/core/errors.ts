@@ -12,7 +12,7 @@
 import { scrubSecrets } from './redact.js';
 import type { CapabilityId, ParamCapabilityId, Provider } from './types.js';
 
-/** The nine error categories delivered by v0.1.0. */
+/** The public error categories. */
 export type ErrorCode =
   /** The provider does not implement the capability at all. */
   | 'UNSUPPORTED_ON_PROVIDER'
@@ -31,7 +31,9 @@ export type ErrorCode =
   /** Transport failed: DNS, TLS, connection reset, timeout. */
   | 'NETWORK_ERROR'
   /** A write call was blocked because the client is in read-only mode. */
-  | 'READONLY_BLOCKED';
+  | 'READONLY_BLOCKED'
+  /** The caller required a complete list, but the page budget was exhausted. */
+  | 'PAGINATION_LIMIT';
 
 /** Runtime list of every error code, in documentation order. */
 export const ERROR_CODES = [
@@ -44,6 +46,7 @@ export const ERROR_CODES = [
   'INVALID_ARGUMENT',
   'NETWORK_ERROR',
   'READONLY_BLOCKED',
+  'PAGINATION_LIMIT',
 ] as const satisfies readonly ErrorCode[];
 
 /** Serialized form produced by {@link GitForgeError.toJSON}. */
@@ -88,6 +91,7 @@ const DEFAULT_RETRYABLE: Readonly<Record<ErrorCode, boolean>> = {
   INVALID_ARGUMENT: false,
   NETWORK_ERROR: true,
   READONLY_BLOCKED: false,
+  PAGINATION_LIMIT: false,
 };
 
 /**

@@ -43,6 +43,14 @@ describe('error formatting', () => {
     expect(text).toContain('retryable=true');
   });
 
+  it('serializes PAGINATION_LIMIT as a non-retryable tool error', () => {
+    const result = toErrorResult(
+      new GitForgeError({ code: 'PAGINATION_LIMIT', message: 'page budget', provider: 'gitee' }),
+    );
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toBe('[PAGINATION_LIMIT] provider=gitee — page budget');
+  });
+
   it('omits absent fields rather than printing placeholders', () => {
     const error = new GitForgeError({ code: 'PROVIDER_ERROR', message: 'boom' });
     const text = formatError(error);
@@ -158,6 +166,38 @@ describe('tool-level errors over MCP', () => {
       expect(resultText(result)).toContain(fragment);
     expect(harness.mock.calls).toHaveLength(1);
   });
+
+  it.each(['github', 'gitee', 'atomgit'])(
+    'omits a malformed Issue page body from the %s tool error',
+    async (provider) => {
+      const diagnostic = 'synthetic upstream private diagnostic';
+      harness = await connect(undefined, [
+        {
+          match: /\/issues\?/,
+          responses: [
+            { body: { trace_id: diagnostic } },
+            { body: { trace_id: diagnostic }, headers: { 'x-request-id': 'mcp-header-id' } },
+          ],
+        },
+      ]);
+      const call = {
+        name: 'git_list_issues',
+        arguments: { provider, owner: 'sample', repo: 'demo', state: 'all' },
+      };
+      const withoutHeader = await harness.client.callTool(call);
+      const withHeader = await harness.client.callTool(call);
+      for (const result of [withoutHeader, withHeader]) {
+        expect(isErrorResult(result)).toBe(true);
+        expect(resultText(result)).toContain('[PROVIDER_ERROR]');
+        expect(resultText(result)).toContain(`provider=${provider}`);
+        expect(resultText(result)).toContain('status=200');
+        expect(JSON.stringify(result)).not.toContain(diagnostic);
+      }
+      expect(resultText(withoutHeader)).not.toContain('requestId=');
+      expect(resultText(withHeader)).toContain('requestId=mcp-header-id');
+      expect(harness.mock.calls).toHaveLength(2);
+    },
+  );
 
   it('reports an upstream 404 as NOT_FOUND', async () => {
     harness = await connect({ tokens: { github: 'x' }, readonly: false, configured: ['github'] }, [

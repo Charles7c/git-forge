@@ -21,7 +21,7 @@ import {
 /** A synthetic token that must never survive into a serialized error. */
 const SECRET_TOKEN = ['synth', 'etic', 'token', 'value', '0123456789'].join('-');
 
-/** Field expectations for each of the nine codes. */
+/** Field expectations for every public error code. */
 const CODE_CASES: ReadonlyArray<{
   code: ErrorCode;
   error: GitForgeError;
@@ -82,12 +82,22 @@ const CODE_CASES: ReadonlyArray<{
     retryable: false,
     provider: 'github',
   },
+  {
+    code: 'PAGINATION_LIMIT',
+    error: new GitForgeError({
+      code: 'PAGINATION_LIMIT',
+      message: 'page budget',
+      provider: 'gitee',
+    }),
+    retryable: false,
+    provider: 'gitee',
+  },
 ];
 
 describe('error codes', () => {
-  it('defines exactly nine codes', () => {
-    expect(ERROR_CODES).toHaveLength(9);
-    expect(new Set(ERROR_CODES).size).toBe(9);
+  it('defines exactly ten codes', () => {
+    expect(ERROR_CODES).toHaveLength(10);
+    expect(new Set(ERROR_CODES).size).toBe(10);
   });
 
   it.each(CODE_CASES)(

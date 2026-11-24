@@ -70,7 +70,10 @@ describe.each(PROVIDERS)('issue contract (%s)', (provider) => {
       '-1',
     ];
     const { client } = buildClient({}, [
-      { match: /\/issues\?/, responses: [{ body: ids.map((number) => ({ number })) }] },
+      {
+        match: /\/issues\?/,
+        responses: [{ body: ids.map((number) => ({ number, state: 'open' })) }],
+      },
     ]);
     const issues = await client.listIssues({ provider, ...REPO, state: 'all' });
     expect(issues.map((issue) => issue.number)).toEqual([

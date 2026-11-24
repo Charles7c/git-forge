@@ -160,9 +160,11 @@ export function mapPullRequestState(raw: unknown): PullRequestState {
   return raw === 'open' ? 'open' : 'closed';
 }
 
-/** Whether a raw issue-list entry is really a pull request. */
+/** Whether the issue-list entry contains GitHub's pull request API URL marker. */
 export function isPullRequestEntry(raw: unknown): boolean {
-  return asRecord(raw).pull_request !== undefined;
+  const marker = asRecord(asRecord(raw).pull_request);
+  const url = str(marker.url);
+  return url !== undefined && /^https?:\/\//i.test(url) && URL.canParse(url);
 }
 
 /* -------------------------------------------------------------------------- */

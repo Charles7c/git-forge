@@ -9,4 +9,8 @@
 - A local stdio MCP server with 23 tools backed by the SDK and provider-specific capability descriptions.
 - Bilingual setup instructions, offline adapter contracts and loopback transport checks.
 
+### Fixed
+
+- Issue lists reject malformed pages or invalid Issue numbers and states rather than returning misleading results. SDK callers can opt into `requireComplete` to reject budget truncation without changing the default array behavior.
+
 No registry publication or tagged release is implied by this entry.

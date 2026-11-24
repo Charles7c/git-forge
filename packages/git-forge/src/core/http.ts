@@ -431,7 +431,7 @@ export class HttpClient {
     return JSON.stringify(spec.body);
   }
 
-  /** Builds a non-replayable error when success cannot be confirmed. */
+  /** Builds a non-replayable error when success cannot be confirmed; uses header metadata only. */
   invalidResponse(
     response: Pick<HttpResponse, 'status' | 'headers'>,
     message: string,

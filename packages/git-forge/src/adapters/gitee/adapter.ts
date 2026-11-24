@@ -15,6 +15,7 @@
  *   missing file path answers `200 + []` rather than 404, so existence can never
  *   be decided from the status code.
  */
+import { selectIssueRows } from '../issues.js';
 import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
@@ -617,8 +618,9 @@ class GiteeAdapter
       },
       {
         maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
         query: { state, labels: joinLabels(params.labels) },
-        selectItems: (raw) => asArray(raw),
+        selectItems: (_raw, { response }) => selectIssueRows(ctx.http, response),
         keyOf: (raw) => listKey(asRecord(raw).number),
       },
     );

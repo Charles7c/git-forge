@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-面向 **GitHub、Gitee 和 AtomGit** 的 TypeScript SDK 与 stdio MCP 服务。应用与 AI 客户端共享平台适配器。0.1.0 是**预发布版本**；下面从本地源码打包安装，不依赖这两个包已在 npm 发布。[能力矩阵](#能力矩阵) · [平台差异](./docs/providers.md)
+面向 **GitHub、Gitee 和 AtomGit** 的 TypeScript SDK 与 stdio MCP 服务。应用与 AI 客户端共享平台适配器。下面分别说明如何安装已发布的版本和如何从源码安装。[能力矩阵](#能力矩阵) · [平台差异](./docs/providers.md)
 
 ## 安装与快速开始
 
@@ -14,7 +14,9 @@ pnpm build
 pnpm test:e2e
 ```
 
-最后一条命令运行本地 HTTP 与 stdio 测试，不需要令牌。要在另一个项目使用，先建一个空目录存放归档，将 `/path/to/archives` 替换为它的绝对路径，然后在源码根目录执行：
+最后一条命令运行本地 HTTP 与 stdio 测试，不需要令牌。使用已发布的版本时，SDK 用 `npm install @charles7c/git-forge` 安装，MCP 服务用[客户端接入](#mcp-客户端接入)中的 `npx` 示例启动。
+
+使用未发布的源码或离线安装时，先建一个空目录存放归档，将 `/path/to/archives` 替换为它的绝对路径，然后在源码根目录执行：
 
 ```sh
 pnpm --dir packages/git-forge pack --out /path/to/archives/sdk.tgz
@@ -88,7 +90,7 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 
 ## MCP 客户端接入
 
-使用 Node 和**已安装的** MCP 入口的绝对路径。在应用目录运行 `node -p "process.execPath"`、`node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"`，将第二个结果末尾的 `package.json` 换成 `dist/index.js`。用这两个实际路径替换示例。Windows 可写成 `C:/Program Files/nodejs/node.exe` 与 `C:/apps/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js`。无需 shell、全局安装或 `npx` 查找。
+等 `@charles7c/git-forge-mcp@0.1.0` 在 npm 上可用后，用 Node 20 或更高版本附带的 `npx` 启动。`--yes` 用于跳过安装确认，避免 GUI 客户端启动时等待输入。以下配置均开启只读模式。
 
 **Claude Desktop**（Settings → Developer → Edit Config，即 `claude_desktop_config.json`）和 **Cursor**（用户 `~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）使用：
 
@@ -96,9 +98,9 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 {
   "mcpServers": {
     "git-forge": {
-      "command": "/usr/local/bin/node",
-      "args": ["/opt/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js"],
-      "env": { "GITKIT_READONLY": "1" }
+      "command": "npx",
+      "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
+      "env": { "GIT_FORGE_READONLY": "1" }
     }
   }
 }
@@ -112,8 +114,8 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
     "servers": {
       "git-forge": {
         "type": "stdio",
-        "command": "/usr/local/bin/node",
-        "args": ["/opt/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js"],
+        "command": "npx",
+        "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
         "env": { "GIT_FORGE_READONLY": "1" }
       }
     }
@@ -121,7 +123,11 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 }
 ```
 
-与现有配置合并后重启客户端；即使没有令牌也应能列出 23 个工具。需要读取时，通过客户端私有环境/密钥设置或可信本地启动器，将所需令牌传给**服务进程**。不要假设 GUI 会继承终端环境，也不要在 JSON 中假设 `$GITHUB_TOKEN` 或 `${GITHUB_TOKEN}` 会自动展开，否则传入的可能只是字面字符串。不要提交令牌。看不到工具时检查两个绝对路径及 stderr，stdout 仅承载 MCP 协议。
+- 如果 Windows GUI 不能直接启动 `npx`，改用 `"command": "cmd.exe"` 和 `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.1.0"]`。如果客户端的 `PATH` 中没有 Node 和 npm，使用下方的绝对路径方式。
+- 如果 npm 镜像尚未同步该版本，可在服务的 `env` 中添加 `"npm_config_registry": "https://registry.npmjs.org/"`。
+- 发布前或离线使用时，按上文安装本地归档。在安装目录运行 `node -p "process.execPath"`，用得到的 Node 绝对路径作为 `command`；再运行 `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"`，将结果末尾的 `package.json` 换成 `dist/index.js`，以这个绝对路径作为 `args` 的唯一一项。
+
+与现有配置合并后重启客户端；即使没有令牌也应能列出 23 个工具。需要读取时，通过客户端私有环境/密钥设置或可信本地启动器，将所需令牌传给**服务进程**。不要假设 GUI 会继承终端环境，也不要在 JSON 中假设 `$GITHUB_TOKEN` 或 `${GITHUB_TOKEN}` 会自动展开，否则传入的可能只是字面字符串。不要提交令牌。看不到工具时检查启动命令和 stderr，stdout 仅承载 MCP 协议。
 
 初始化 MCP 会话后，从客户端发出以下只读 JSON-RPC 请求。示例中的组织和仓库均为虚构名称，请替换为你有权读取的仓库。
 
@@ -149,6 +155,8 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 
 列表按页序合并并去重，默认 `maxPages` 为 10（每页请求 100 条），可调小以控制读取量。Gitee 的 open/closed Issue 查询分别对两个原生状态分页。AtomGit 的 closed PR 查询分别读取 `closed`、`merged`、`locked`，每种状态最多 `maxPages` 页，最后按 PR 编号去重。读取遇限流、传输错误或可重试服务端错误时，首次请求后最多重试三次。没有服务端提示时，读取使用带全抖动的指数退避。有效的 `Retry-After`（秒数或 HTTP 日期）指定下次请求的最早时间；所需等待超过 `retry.maxRetryAfterMs`（默认 60 秒）时，SDK 直接返回原错误，不再重试。仅当 GitHub 返回限流响应且剩余配额为零时，才用配额重置时间作为后备提示。默认不重试写请求。用 `git.bulk(items, run, { concurrency: 4 })` 执行多项独立调用，结果保留输入顺序与下标；逐项检查 `{ ok, value }` 或 `{ ok, error }`，成功项不回滚。
 
+为 SDK 的 `git.listIssues` 传入 `requireComplete: true` 后，成功时仍返回数组；达到 `maxPages` 且仍有下一页迹象时，抛出不可自动重试的 `PAGINATION_LIMIT`。Gitee 分流查询中，任一流截断均会失败。识别到末页响应头时正常结束；没有可用提示的满页会在预算允许时探查下一页。该选项检测的是预算截断，不保证跨页快照一致，也无法补足平台未提供的分页信号。不开启该选项时仍返回预算内已读取的数据，MCP 保持此默认行为。两种模式遇到无效的 Issue 列表响应均抛出 `PROVIDER_ERROR`，不会返回空数组或部分数组。
+
 | `GitForgeError.code`      | 处理建议                                                 |
 | ------------------------- | -------------------------------------------------------- |
 | `INVALID_ARGUMENT`        | 检查必填字段、编号、文件操作与过滤条件。                 |
@@ -160,6 +168,7 @@ console.log(issues.map(({ number, labels }) => ({ number, labels })));
 | `RATE_LIMITED`            | 降低并发，等待配额恢复。                                 |
 | `NETWORK_ERROR`           | 检查网络、DNS、TLS 与超时设置。                          |
 | `PROVIDER_ERROR`          | 如有 `status` 或 `requestId`，据此定位后再决定是否重试。 |
+| `PAGINATION_LIMIT`        | 提高 `maxPages` 或缩小 Issue 查询范围。                  |
 
 SDK 的 `error.toJSON()` 提供 `code`、`message`、`retryable`，并在可知时附 `provider`、`status`、`requestId`、`capability`。MCP 的 SDK 错误返回 `isError: true`。离线契约测试覆盖平台适配逻辑；本地 HTTP/stdio 测试覆盖传输，**不能证明当前托管平台行为或账号权限**。
 

@@ -133,6 +133,18 @@ describe('resolveNextPage', () => {
   });
 });
 
+describe('strict pagination links', () => {
+  it.each([
+    [2, 1, false],
+    [3, 0, true],
+  ])('uses rel=last page %i when there is no rel=next', (lastPage, itemCount, hasNext) => {
+    const link = `<https://pagination.invalid/issues?page=${lastPage}>; rel="last"`;
+    expect(resolveNextPage({ link, totalPage: null, page: 2, itemCount, perPage: 1 }, true)).toBe(
+      hasNext,
+    );
+  });
+});
+
 describe('readTotalPage / readTotalCount', () => {
   it('reads total_page from a Headers instance', () => {
     expect(readTotalPage(new Headers({ total_page: '37' }))).toBe(37);

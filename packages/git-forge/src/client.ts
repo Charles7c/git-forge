@@ -218,6 +218,7 @@ function validateListFilters(params: { labels?: unknown; maxPages?: unknown }): 
 
 function validateListIssues(params: ListIssuesParams): void {
   assertRepoRef(params);
+  assertOptionalBoolean('requireComplete', params.requireComplete);
   assertOptionalOneOf('state', params.state, ['open', 'closed', 'all']);
   assertOptionalPositiveInt('milestone', params.milestone);
   validateListFilters(params);

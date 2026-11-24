@@ -1,6 +1,8 @@
 # @charles7c/git-forge
 
-TypeScript SDK for issues, pull requests, repositories, files, branches and commits on GitHub, Gitee and AtomGit. Node 20+, ESM and CommonJS with declarations; no third-party runtime dependencies. Pre-release: build the source and install the local SDK tarball.
+TypeScript SDK for issues, pull requests, repositories, files, branches and commits on GitHub, Gitee and AtomGit. Node 20+, ESM and CommonJS with declarations; no third-party runtime dependencies.
+
+For a published version, run `npm install @charles7c/git-forge`. For an unpublished checkout or offline installation, build the source and install the local SDK tarball.
 
 ```js
 import { GitClient } from '@charles7c/git-forge';

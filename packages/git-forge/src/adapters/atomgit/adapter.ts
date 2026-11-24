@@ -11,6 +11,7 @@
  * - response `url` fields point at `atomgit.com/api/v5/...`; every
  *   request is built from the configured base URL instead.
  */
+import { selectIssueRows } from '../issues.js';
 import { collectPullRequests, pullFromResponse, requirePullNumber } from '../pulls.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
@@ -130,13 +131,14 @@ class AtomGitAdapter
       },
       {
         maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
         query: {
           state: params.state,
           labels: joinLabels(params.labels),
           // AtomGit's issue filter takes the milestone ordinal.
           milestone: params.milestone,
         },
-        selectItems: (raw) => asArray(raw),
+        selectItems: (_raw, { response }) => selectIssueRows(ctx.http, response),
         keyOf: (raw) => listKey(asRecord(raw).number),
       },
     );

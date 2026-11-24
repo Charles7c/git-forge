@@ -12,6 +12,7 @@
  * raising an error*, which is the worst possible failure: the caller gets a
  * short list and believes it is complete. Hence the ordered fallbacks.
  */
+import { GitForgeError } from './errors.js';
 import type { HttpClient, HttpRequestSpec, HttpResponse } from './http.js';
 import type { ListOptions } from './types.js';
 
@@ -74,6 +75,74 @@ export function parseLinkHeader(header: string | null | undefined): Record<strin
   return result;
 }
 
+/** Accept only decimal page counts that can be compared without rounding. */
+function positivePageNumber(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Reads pagination evidence without treating a partially parsed Link as terminal. */
+function strictLinkHint(header: string | null, page: number): boolean | undefined {
+  if (!header?.trim()) return undefined;
+
+  const link = /<([^<>\s]+)>[ \t]*/y;
+  // Sticky matches consume the field in order; commas inside a target or a
+  // quoted parameter are not link delimiters. Support Gitee's single quotes.
+  const param =
+    /;[ \t]*([\w!#$%&'*+.^`|~-]+)(?:[ \t]*=[ \t]*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([\w!#$%&*+.^`|~-][\w!#$%&'*+.^`|~-]*)))?[ \t]*/y;
+  // HTTP list syntax allows empty members between, before or after link-values.
+  const separator = /(?:,[ \t]*)+/y;
+  const field = header.trim();
+  let cursor = separator.test(field) ? separator.lastIndex : 0;
+  if (cursor === field.length) return undefined;
+  let terminal = true;
+
+  while (cursor < field.length) {
+    link.lastIndex = cursor;
+    const target = link.exec(field)?.[1];
+    if (target === undefined) return undefined;
+    cursor = link.lastIndex;
+    let relations: string[] = [];
+    let anchored = false;
+    while (field[cursor] === ';') {
+      param.lastIndex = cursor;
+      const attribute = param.exec(field);
+      const name = attribute?.[1]?.toLowerCase();
+      if (name === undefined) return undefined;
+      cursor = param.lastIndex;
+      if (name === 'anchor') anchored = true;
+      if (name === 'rel' && relations.length === 0) {
+        const value = attribute?.[2] ?? attribute?.[3] ?? attribute?.[4];
+        if (!value?.trim()) return undefined;
+        relations = value.trim().toLowerCase().split(/\s+/);
+      }
+    }
+    if (cursor < field.length) {
+      separator.lastIndex = cursor;
+      if (!separator.test(field)) return undefined;
+      cursor = separator.lastIndex;
+    }
+
+    if (!anchored && relations.includes('next')) return true;
+    if (!anchored && relations.includes('last')) {
+      // Inspect only the query from the URI reference, never its destination.
+      const query = /^[^?#]*\?([^#]*)/.exec(target)?.[1];
+      const pages = new URLSearchParams(query).getAll('page');
+      const last = pages.length === 1 ? positivePageNumber(pages[0]) : null;
+      if (last !== null && last > page) return true;
+      if (last !== page) terminal = false;
+    } else if (anchored || relations.length === 0 || !relations.every(isBackwardRelation)) {
+      terminal = false;
+    }
+  }
+  return terminal ? false : undefined;
+}
+
+function isBackwardRelation(relation: string): boolean {
+  return relation === 'prev' || relation === 'first';
+}
+
 /** Inputs for a single next-page decision. */
 export interface PageSignals {
   /** Raw `Link` header, or `null` when the provider sent none. */
@@ -91,24 +160,27 @@ export interface PageSignals {
 /**
  * Decides whether a following page exists.
  *
- * Evaluation short-circuits in signal order, so a `Link` header wins over a
- * short page: platforms may cap `per_page` below what was asked for, and the
- * short page alone would then be a false negative.
+ * Providers may cap `per_page` below the requested size, so explicit hints
+ * take precedence over page size. Strict collection prefers any reliable
+ * continuation hint over terminal hints, even if the headers disagree.
  */
-export function resolveNextPage(signals: PageSignals): boolean {
+export function resolveNextPage(signals: PageSignals, strict = false): boolean {
   const { link, totalPage, page, itemCount, perPage } = signals;
 
-  const parsed = parseLinkHeader(link);
-  if (parsed.next !== undefined) {
-    return true;
+  if (strict) {
+    const linkHint = strictLinkHint(link, page);
+    if (linkHint === true) return true;
+    if (totalPage !== null && Number.isSafeInteger(totalPage) && totalPage > 0) {
+      return page < totalPage;
+    }
+    if (linkHint === false) return false;
+  } else {
+    if (parseLinkHeader(link).next !== undefined) return true;
+    if (totalPage !== null && Number.isFinite(totalPage)) return page < totalPage;
   }
 
-  if (totalPage !== null && Number.isFinite(totalPage)) {
-    return page < totalPage;
-  }
-
-  // No header hints: a full page implies more may follow. An empty or short
-  // page means we are done.
+  // No usable header hints: a full page implies more may follow. An empty or
+  // short page means we are done.
   return itemCount >= perPage && itemCount > 0;
 }
 
@@ -130,6 +202,13 @@ export function readTotalPage(
     return null;
   }
   return value;
+}
+
+/** Neither spelling should hide a valid continuation hint from the other. */
+function readStrictTotalPage(headers: Headers): number | null {
+  const totalPage = positivePageNumber(readHeader(headers, 'total_page')?.trim());
+  const alias = positivePageNumber(readHeader(headers, 'x-total-pages')?.trim());
+  return totalPage === null || alias === null ? (totalPage ?? alias) : Math.max(totalPage, alias);
 }
 
 /** Reads `total_count` from response headers, when a provider sends it. */
@@ -210,6 +289,8 @@ export interface PageResult<T> {
 export interface CollectOptions<T> extends ListOptions {
   /** Page size; clamped to `[1, 100]`. */
   perPage?: number;
+  /** Reject instead of returning partial items when another page is indicated at the cap. */
+  requireComplete?: boolean;
   /** Extracts the array of items from a page body. */
   selectItems: (raw: unknown, ctx: { page: number; response: HttpResponse }) => T[];
   /** Identity used for cross-page deduplication. */
@@ -222,9 +303,9 @@ export interface CollectOptions<T> extends ListOptions {
  * Fetches every page of a list endpoint and returns the merged, deduplicated
  * result in page order.
  *
- * Stops at whichever comes first: an empty page, a short page with no pagination
- * headers, the last `total_page`, or `maxPages`. The `maxPages` cap is a
- * truncation, not an error — the caller asked for a bounded result.
+ * Stops when pagination signals indicate the end or the budget is exhausted.
+ * By default the budget can truncate results; `requireComplete` rejects when
+ * the final allowed page still indicates more data.
  */
 export async function collectPages<T>(
   http: HttpClient,
@@ -236,6 +317,7 @@ export async function collectPages<T>(
 ): Promise<T[]> {
   const perPage = normalizePerPage(options.perPage);
   const maxPages = normalizeMaxPages(options.maxPages);
+  const strict = options.requireComplete === true;
   const collected: T[] = [];
   const baseQuery = { ...spec.query, ...options.query };
 
@@ -252,16 +334,26 @@ export async function collectPages<T>(
     const items = options.selectItems(response.json, { page, response });
     collected.push(...items);
 
-    const hasNext = resolveNextPage({
-      link: readHeader(response.headers, 'link') ?? null,
-      totalPage: readTotalPage(response.headers),
-      page,
-      itemCount: items.length,
-      perPage,
-    });
+    const hasNext = resolveNextPage(
+      {
+        link: readHeader(response.headers, 'link') ?? null,
+        totalPage: strict ? readStrictTotalPage(response.headers) : readTotalPage(response.headers),
+        page,
+        itemCount: items.length,
+        perPage,
+      },
+      strict,
+    );
 
     if (!hasNext) {
       break;
+    }
+    if (strict && page === maxPages) {
+      throw new GitForgeError({
+        code: 'PAGINATION_LIMIT',
+        provider: http.provider,
+        message: `The page budget (maxPages=${maxPages}) ended while more pages were indicated.`,
+      });
     }
   }
 

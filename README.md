@@ -2,7 +2,7 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-A TypeScript SDK and a stdio MCP server for **GitHub, Gitee and AtomGit**. Applications and AI clients use the same provider adapters. Version 0.1.0 is a **pre-release**; the instructions below use local packages, not an assumed registry release. [Capability matrix](#capabilities) · [Provider notes](./docs/providers.md)
+A TypeScript SDK and a stdio MCP server for **GitHub, Gitee and AtomGit**. Applications and AI clients use the same provider adapters. The instructions below cover both published versions and installation from source. [Capability matrix](#capabilities) · [Provider notes](./docs/providers.md)
 
 ## Install and try it
 
@@ -14,7 +14,9 @@ pnpm build
 pnpm test:e2e
 ```
 
-The last command runs local HTTP and stdio smoke tests without a token. To use the packages from a different project, create an empty directory for archives and replace `/path/to/archives` with its absolute path. From the checkout:
+The last command runs local HTTP and stdio smoke tests without a token. For a published version, use `npm install @charles7c/git-forge` for the SDK or the `npx` example in [MCP client setup](#mcp-client-setup) for the server.
+
+For an unpublished checkout or an offline install, create an empty directory for archives and replace `/path/to/archives` with its absolute path. From the checkout:
 
 ```sh
 pnpm --dir packages/git-forge pack --out /path/to/archives/sdk.tgz
@@ -88,7 +90,7 @@ Names in the middle column are our tools **without** their `git_` prefix. The ri
 
 ## MCP client setup
 
-Use an absolute path to Node and the **installed** MCP entry. From your application run `node -p "process.execPath"` and `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"`; replace the latter path's `package.json` with `dist/index.js`. Replace both sample paths below. On Windows, for example, use `C:/Program Files/nodejs/node.exe` and `C:/apps/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js`. No shell, global install or `npx` lookup is needed.
+Once `@charles7c/git-forge-mcp@0.1.0` is available on npm, use `npx` from Node 20 or newer. `--yes` skips the install prompt so a GUI client can start the server unattended. Both examples start it in read-only mode.
 
 **Claude Desktop** (Settings → Developer → Edit Config, `claude_desktop_config.json`) and **Cursor** (user `~/.cursor/mcp.json` or project `.cursor/mcp.json`) use this JSON:
 
@@ -96,9 +98,9 @@ Use an absolute path to Node and the **installed** MCP entry. From your applicat
 {
   "mcpServers": {
     "git-forge": {
-      "command": "/usr/local/bin/node",
-      "args": ["/opt/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js"],
-      "env": { "GITKIT_READONLY": "1" }
+      "command": "npx",
+      "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
+      "env": { "GIT_FORGE_READONLY": "1" }
     }
   }
 }
@@ -112,8 +114,8 @@ Use an absolute path to Node and the **installed** MCP entry. From your applicat
     "servers": {
       "git-forge": {
         "type": "stdio",
-        "command": "/usr/local/bin/node",
-        "args": ["/opt/forge/node_modules/@charles7c/git-forge-mcp/dist/index.js"],
+        "command": "npx",
+        "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
         "env": { "GIT_FORGE_READONLY": "1" }
       }
     }
@@ -121,7 +123,11 @@ Use an absolute path to Node and the **installed** MCP entry. From your applicat
 }
 ```
 
-Merge the entry with existing settings and restart the client. Expect 23 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the two paths and stderr; stdout is for MCP only.
+- If a Windows GUI cannot launch `npx` directly, use `"command": "cmd.exe"` and `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.1.0"]`. If Node and npm are not on the client's `PATH`, use the absolute-path setup below.
+- If your npm mirror has not synced the release, optionally add `"npm_config_registry": "https://registry.npmjs.org/"` to the server's `env` object.
+- Before publication or for offline use, install the local tarballs as described above. Set `command` to the absolute Node path from `node -p "process.execPath"`. Run `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"` from that installation, replace the trailing `package.json` with `dist/index.js`, and use that absolute path as the only `args` entry.
+
+Merge the entry with existing settings and restart the client. Expect 23 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the launch command and stderr; stdout is for MCP only.
 
 After initializing an MCP session, send this read-only JSON-RPC request from the client. The names below are fictional; replace them with a repository you are authorized to read.
 
@@ -149,6 +155,8 @@ On success, parse `result.content[0].text` as a JSON array of issues. Each `numb
 
 List methods aggregate in page order and deduplicate. Default `maxPages` is 10 (100 items requested per page); use a smaller limit to bound work. Gitee open/closed issue queries page two native states separately. An AtomGit closed PR query pages `closed`, `merged` and `locked` separately, up to `maxPages` each, then deduplicates by PR number. Reads retry rate limits, transport failures and retryable server errors up to three times after the first attempt. Without a server hint, reads use exponential backoff with full jitter. A valid `Retry-After` (seconds or HTTP-date) sets the earliest next attempt. If the required wait exceeds `retry.maxRetryAfterMs` (60 s by default), the SDK returns the original error without retrying. A GitHub quota reset is a fallback only for a rate-limited response with zero remaining quota. Writes do not retry by default. For multiple independent calls, `git.bulk(items, run, { concurrency: 4 })` retains input order and index: inspect each `{ ok, value }` or `{ ok, error }`. Successful items are not rolled back.
 
+When called with `requireComplete: true`, the SDK's `git.listIssues` still returns an array on success, but rejects with non-retryable `PAGINATION_LIMIT` when another page is indicated at the `maxPages` cap. For a split Gitee query, neither native stream may be truncated. A recognized final-page header is honored; a full page with no usable hint is probed while budget remains. This detects budget truncation, not concurrent changes or pagination hints missing upstream. Without the flag, capped calls still return the items read; MCP keeps this default. In either mode, an invalid Issue list response rejects with `PROVIDER_ERROR` instead of returning an empty or partial array.
+
 | `GitForgeError.code`      | What to do                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------- |
 | `INVALID_ARGUMENT`        | Check required fields, identifiers, file actions and filters.                   |
@@ -160,6 +168,7 @@ List methods aggregate in page order and deduplicate. Default `maxPages` is 10 (
 | `RATE_LIMITED`            | Reduce concurrency; allow the quota to recover.                                 |
 | `NETWORK_ERROR`           | Check connectivity, DNS, TLS and timeout.                                       |
 | `PROVIDER_ERROR`          | Inspect `status` and `requestId` if present before retrying.                    |
+| `PAGINATION_LIMIT`        | Increase `maxPages` or narrow the Issue query.                                  |
 
 Use `error.toJSON()` for a structured SDK error (`code`, `message`, `retryable`; provider/status/requestId/capability when known). MCP reports SDK failures with `isError: true`. Offline contract tests cover the adapters; local HTTP/stdio tests cover transport, **not current hosted service behavior or permissions**.
 

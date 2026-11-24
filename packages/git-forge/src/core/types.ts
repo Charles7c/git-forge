@@ -307,6 +307,8 @@ export interface ListOptions {
 
 /** Parameters of `listIssues`. */
 export interface ListIssuesParams extends RepoRef, ListOptions {
+  /** Reject with `PAGINATION_LIMIT` if the page budget may truncate the list. Defaults to false. */
+  requireComplete?: boolean;
   state?: IssueState | 'all';
   /** Comma-joined for both Gitee and AtomGit on the wire. */
   labels?: string[];

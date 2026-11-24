@@ -13,6 +13,7 @@
  *   read tip, commit and tree; create tree and commit; update the ref
  *   chain, which yields exactly one commit.
  */
+import { selectIssueRows } from '../issues.js';
 import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
@@ -167,12 +168,14 @@ class GitHubAdapter
       { method: 'GET', path: `${REPO_PATH}/issues`, ...base(owner, repo) },
       {
         maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
         query: {
           state: params.state,
           labels: joinLabels(params.labels),
           milestone: params.milestone,
         },
-        selectItems: (raw) => asArray(raw),
+        selectItems: (_raw, { response }) =>
+          selectIssueRows(ctx.http, response, isPullRequestEntry),
         keyOf: (raw) => listKey(asRecord(raw).number),
       },
     );
