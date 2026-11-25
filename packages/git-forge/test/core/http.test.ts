@@ -99,7 +99,7 @@ describe('bearer auth', () => {
     await client.request({ method: 'GET', path: '/user' });
 
     const headers = mock.calls[0]!.headers;
-    expect(headers['user-agent']).toBe('git-forge/0.1.0');
+    expect(headers['user-agent']).toBe('git-forge/0.2.0');
     expect(headers['x-github-api-version']).toBe('2022-11-28');
     expect(headers.accept).toBe('application/vnd.github+json');
   });

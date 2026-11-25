@@ -14,8 +14,8 @@ import { REPO, buildClient, buildTokenlessClient } from '../helpers/clientHarnes
  * platform cannot regress alone:
  *
  * 1. A missing token refuses the call with zero HTTP.
- * 2. `readonly` refuses all 12 write capabilities with zero HTTP while every
- *    read capability still works.
+ * 2. `readonly` refuses all 13 write capabilities with zero HTTP while every
+ *    read capability the provider actually serves still works.
  * 3. Gate order is fixed: validation, then read-only, then token, then method
  *    capability, then parameter capability.
  */
@@ -97,9 +97,39 @@ const WRITE = {
   },
 };
 
+/** A label event as GitHub and Gitee report it. */
+const LABEL_EVENT = {
+  event: 'labeled',
+  action_type: 'add_label',
+  label: { name: 'bug' },
+  after_change_value: 'bug',
+  actor: { login: 'tester' },
+  user: { login: 'tester' },
+  created_at: '2025-01-01T00:00:00Z',
+};
+
+const STARGAZER = {
+  user: { login: 'star-fan' },
+  login: 'star-fan',
+  starred_at: '2025-01-01T00:00:00Z',
+};
+
+const RELEASE = {
+  id: 1,
+  tag_name: 'v1.0.0',
+  name: 'v1.0.0',
+  published_at: '2025-01-01T00:00:00Z',
+  created_at: '2025-01-01T00:00:00Z',
+  html_url: 'https://example.com/releases/v1.0.0',
+  draft: false,
+  prerelease: false,
+};
+
+const LABEL = { id: 1, name: 'bug', color: 'd73a4a', description: 'Something is wrong' };
+
 /**
  * One callable per method-level capability, all with a payload that passes
- * validation, so a test can drive the gate machinery for each of the 24.
+ * validation, so a test can drive the gate machinery for each of the 29.
  */
 const CALLS: Readonly<
   Record<
@@ -130,6 +160,10 @@ const CALLS: Readonly<
   'issues.createComment': {
     method: 'createIssueComment',
     invoke: (c, provider) => c.createIssueComment({ provider, ...REPO, number: 1, body: 'b' }),
+  },
+  'issues.listEvents': {
+    method: 'listIssueEvents',
+    invoke: (c, provider) => c.listIssueEvents({ provider, ...REPO, number: 1 }),
   },
   'pulls.list': {
     method: 'listPullRequests',
@@ -172,6 +206,10 @@ const CALLS: Readonly<
   'repos.getFileContents': {
     method: 'getFileContents',
     invoke: (c, provider) => c.getFileContents({ provider, ...REPO, path: 'README.md' }),
+  },
+  'repos.listStargazers': {
+    method: 'listStargazers',
+    invoke: (c, provider) => c.listStargazers({ provider, ...REPO }),
   },
   'files.create': {
     method: 'createOrUpdateFile',
@@ -222,6 +260,18 @@ const CALLS: Readonly<
     method: 'getCommit',
     invoke: (c, provider) => c.getCommit({ provider, ...REPO, sha: 'a'.repeat(40) }),
   },
+  'releases.list': {
+    method: 'listReleases',
+    invoke: (c, provider) => c.listReleases({ provider, ...REPO }),
+  },
+  'labels.list': {
+    method: 'listLabels',
+    invoke: (c, provider) => c.listLabels({ provider, ...REPO }),
+  },
+  'labels.create': {
+    method: 'createLabel',
+    invoke: (c, provider) => c.createLabel({ provider, ...REPO, name: '5.0.0', color: '#d73a4a' }),
+  },
 };
 
 /**
@@ -256,6 +306,8 @@ const HAPPY_ROUTES = [
     responses: [jsonResponse({ sha: 'f'.repeat(40), html_url: 'https://example.com/c/f' })],
   },
   { match: /\/issues\/\d+\/comments/, responses: [jsonResponse([COMMENT])] },
+  { match: /\/issues\/\d+\/timeline/, responses: [jsonResponse([LABEL_EVENT])] },
+  { match: /\/operate_logs/, responses: [jsonResponse([LABEL_EVENT])] },
   { match: /\/pulls\/\d+\/comments/, responses: [jsonResponse([COMMENT])] },
   { match: /\/issues\/\d+$/, responses: [jsonResponse(ISSUE)] },
   { match: /\/pulls\/\d+\/merge/, responses: [jsonResponse({ merged: true })] },
@@ -264,6 +316,9 @@ const HAPPY_ROUTES = [
   { match: /\/pulls(\?|$)/, responses: [jsonResponse([PULL])] },
   { match: /\/issues$/, responses: [jsonResponse(ISSUE)] },
   { match: /\/pulls$/, responses: [jsonResponse(PULL)] },
+  { match: /\/stargazers/, responses: [jsonResponse([STARGAZER])] },
+  { match: /\/releases/, responses: [jsonResponse([RELEASE])] },
+  { match: /\/labels/, responses: [jsonResponse([LABEL])] },
   { match: /\/contents\//, responses: [jsonResponse(CONTENT)] },
   { match: /\/contents$/, responses: [jsonResponse(CONTENT)] },
   { match: /\/branches$/, responses: [jsonResponse([BRANCH])] },
@@ -275,7 +330,7 @@ const HAPPY_ROUTES = [
 ];
 
 describe('facade wiring', () => {
-  it('exposes the 24 capabilities of every provider', () => {
+  it('exposes the 29 capabilities of every provider', () => {
     const { client } = buildClient();
     for (const provider of PROVIDERS) {
       expect(Object.keys(client.capabilities(provider)).sort()).toEqual([...CAPABILITY_IDS].sort());
@@ -405,9 +460,9 @@ describe.each(PROVIDERS)('token gate (%s)', (provider) => {
 });
 
 describe.each(PROVIDERS)('read-only gate (%s)', (provider) => {
-  it('blocks exactly the 12 write capabilities with zero HTTP', async () => {
+  it('blocks exactly the 13 write capabilities with zero HTTP', async () => {
     const { client, mock } = buildClient({ readonly: true }, HAPPY_ROUTES);
-    expect(WRITE_CAPABILITIES.size).toBe(12);
+    expect(WRITE_CAPABILITIES.size).toBe(13);
 
     for (const capability of WRITE_CAPABILITIES) {
       const call = CALLS[capability];
@@ -421,10 +476,15 @@ describe.each(PROVIDERS)('read-only gate (%s)', (provider) => {
     expectNoHttp(mock);
   });
 
-  it('still serves the 12 read capabilities', async () => {
+  it('still serves every read capability the provider supports', async () => {
     const { client } = buildClient({ readonly: true }, HAPPY_ROUTES);
     for (const capability of CAPABILITY_IDS) {
       if (WRITE_CAPABILITIES.has(capability)) {
+        continue;
+      }
+      // A declared gap is a platform fact, not a read-only effect; the
+      // capability gate is asserted separately.
+      if (client.capabilities(provider)[capability] !== 'supported') {
         continue;
       }
       await expect(CALLS[capability].invoke(client, provider)).resolves.toBeDefined();

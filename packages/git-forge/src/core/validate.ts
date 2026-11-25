@@ -10,11 +10,11 @@ import { CAPABILITY_IDS, PROVIDERS } from './types.js';
 import type { CapabilityId, Provider } from './types.js';
 
 /**
- * Capabilities that mutate remote state: 12 of the 24.
+ * Capabilities that mutate remote state: 13 of the 29.
  *
  * Declared as a static set rather than inferred from the HTTP verb because the
  * facade's read-only gate must be decidable before dispatch. A test asserts that
- * every entry is a real capability and that the count is exactly 12, so adding a
+ * every entry is a real capability and that the count is exactly 13, so adding a
  * write method without registering it here fails CI.
  */
 export const WRITE_CAPABILITIES: ReadonlySet<CapabilityId> = new Set<CapabilityId>([
@@ -30,6 +30,7 @@ export const WRITE_CAPABILITIES: ReadonlySet<CapabilityId> = new Set<CapabilityI
   'files.delete',
   'files.pushFiles',
   'branches.create',
+  'labels.create',
 ]);
 
 /** Returns `true` when a capability mutates remote state. */
@@ -198,6 +199,184 @@ export function assertOptionalPathSegment(field: string, value: unknown): void {
   assertPathSegment(field, value);
 }
 
+/**
+ * Matches an ISO 8601 date-time with an explicit zone, capturing every part.
+ *
+ * A trailing `Z` or a `±hh:mm` offset is required: the three platforms compare
+ * the bound against their own stored timestamps, and a zone-less string would be
+ * read as local time by one and as UTC by another. The parts are captured
+ * because both the calendar check and the precision-preserving ordering compare
+ * need them individually.
+ */
+const ISO_INSTANT =
+  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+
+/**
+ * Asserts a value is an ISO 8601 instant usable as a server-side bound.
+ *
+ * Only absolute instants are accepted, and the calendar date must exist: a bare
+ * date or a relative phrase would be interpreted differently by each platform,
+ * and an impossible date such as `2026-02-30` or `2026-13-01` would otherwise be
+ * silently rolled over into a window the caller never asked for.
+ *
+ * The UTC offset is checked as an hour **and** a minute field. Testing the total
+ * (`|hh*60+mm| <= 23:59`) accepts `+00:60`, which is not a valid offset: RFC 3339
+ * bounds the minute field by 59, and a platform that parses it as an hour-and-a-
+ * half of drift would compare the bound against a different instant than the
+ * caller wrote.
+ */
+export function assertOptionalIsoInstant(field: string, value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== 'string') {
+    invalid(field, `expected an ISO 8601 string, received ${describe(value)}`);
+  }
+  const parts = parseInstant(value);
+  if (parts === undefined) {
+    invalid(field, 'expected an ISO 8601 date-time such as 2026-01-31T00:00:00Z');
+  }
+  if (!existsOnCalendar(parts)) {
+    invalid(field, 'is not a real calendar date-time');
+  }
+  if (parts.offsetHour !== undefined && parts.offsetHour > 23) {
+    invalid(field, 'has an out-of-range UTC offset hour');
+  }
+  if (parts.offsetMinute !== undefined && parts.offsetMinute > 59) {
+    invalid(field, 'has an out-of-range UTC offset minute');
+  }
+}
+
+/** An instant decomposed into the parts the validator and ordering compare need. */
+interface InstantParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  /** Fractional digits exactly as written, without the leading dot. */
+  fraction: string;
+  /** Offset in minutes east of UTC; `undefined` for a `Z` suffix. */
+  offsetMinutes?: number;
+  /** Offset hour field as written, kept apart so `+00:60` can be rejected. */
+  offsetHour?: number;
+  /** Offset minute field as written. */
+  offsetMinute?: number;
+}
+
+/** Decomposes an ISO 8601 instant, or returns `undefined` when it does not match. */
+function parseInstant(value: string): InstantParts | undefined {
+  const match = ISO_INSTANT.exec(value);
+  if (match === null) {
+    return undefined;
+  }
+  const [, year, month, day, hour, minute, second, fraction, sign, offHour, offMinute] = match;
+  const parts: InstantParts = {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Number(second ?? '0'),
+    fraction: fraction ?? '',
+  };
+  if (sign !== undefined) {
+    const offsetHour = Number(offHour);
+    const offsetMinute = Number(offMinute);
+    parts.offsetHour = offsetHour;
+    parts.offsetMinute = offsetMinute;
+    const offset = offsetHour * 60 + offsetMinute;
+    parts.offsetMinutes = sign === '-' ? -offset : offset;
+  }
+  return parts;
+}
+
+/**
+ * Whether the parts name a date that exists.
+ *
+ * `Date` is deliberately not used: besides normalizing an impossible date (Feb 30
+ * becomes Mar 2), `Date.UTC` applies the two-digit-year rule, so year `0099`
+ * becomes 1999 and the ordering compare would place a first-century bound after a
+ * twentieth-century one. The day count is bounded by the month's own length.
+ */
+function existsOnCalendar(parts: InstantParts): boolean {
+  if (parts.year < 0) return false;
+  if (parts.month < 1 || parts.month > 12) return false;
+  if (parts.day < 1 || parts.day > daysInMonth(parts.year, parts.month)) return false;
+  if (parts.hour > 23 || parts.minute > 59 || parts.second > 59) return false;
+  return true;
+}
+
+/** Days in a month, by the Gregorian leap-year rule. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return isLeapYear(year) ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** Whether a Gregorian year has a leap day. */
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+/**
+ * Days since 1970-01-01 for a Gregorian civil date.
+ *
+ * Howard Hinnant's `days_from_civil`, which is exact for every year and — unlike
+ * `Date.UTC` — does not reinterpret years below 100. Only the day count is
+ * needed; the time of day is added by the caller.
+ */
+function daysFromCivil(year: number, month: number, day: number): number {
+  const shiftedYear = year - (month <= 2 ? 1 : 0);
+  const era = Math.floor(shiftedYear / 400);
+  const yearOfEra = shiftedYear - era * 400;
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra =
+    yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
+  return era * 146097 + dayOfEra - 719468;
+}
+
+/**
+ * Nanoseconds since the epoch, at the precision the caller wrote.
+ *
+ * Comparing with `Date.parse` truncates to milliseconds, so two bounds that
+ * differ only in the seventh, eighth or ninth fractional digit compare equal and
+ * an inverted window slips past the ordering check. ISO 8601 allows up to nine
+ * fractional digits, so the value is built as a `BigInt` from the matched parts
+ * and every digit is kept; only its ordering is used.
+ *
+ * @param value An instant the validator already accepted.
+ */
+export function instantNanos(value: string): bigint {
+  const nanos = tryInstantNanos(value);
+  if (nanos === undefined) {
+    // Unreachable after validation; a caller error rather than a platform one.
+    throw invalidArgumentError(`Invalid instant: ${JSON.stringify(value)}`);
+  }
+  return nanos;
+}
+
+/**
+ * Nanoseconds since the epoch, or `undefined` when the value is not a strict
+ * ISO 8601 instant.
+ *
+ * Used where the value comes from upstream rather than from a caller (event
+ * timestamps), so an unparseable one is reported instead of thrown.
+ */
+export function tryInstantNanos(value: string): bigint | undefined {
+  const parts = parseInstant(value);
+  if (parts === undefined) {
+    return undefined;
+  }
+  const days = BigInt(daysFromCivil(parts.year, parts.month, parts.day));
+  const secondsOfDay = BigInt(parts.hour * 3600 + parts.minute * 60 + parts.second);
+  const nanos = BigInt(parts.fraction.padEnd(9, '0').slice(0, 9));
+  const offset = BigInt(parts.offsetMinutes ?? 0) * 60n * 1_000_000_000n;
+  return (days * 86_400n + secondsOfDay) * 1_000_000_000n + nanos - offset;
+}
+
 /** A segment must survive URL normalization without acquiring path syntax. */
 function unsafeSegment(value: string): boolean {
   return (
@@ -261,6 +440,48 @@ export function assertCapabilityTableKeys(table: Readonly<Record<string, unknown
 /** The closed three-value action set of a `pushFiles` entry. */
 export const PUSH_FILE_ACTIONS = ['create', 'update', 'delete'] as const;
 
+/**
+ * Asserts a label name.
+ *
+ * The platforms disagree about punctuation but agree that a name is non-empty
+ * and carries no control characters; a leading `#` would also be read as a
+ * colour by some clients, so it is refused.
+ */
+export function assertLabelName(field: string, value: unknown): asserts value is string {
+  assertNonEmpty(field, value);
+  if (value.startsWith('#')) {
+    invalid(field, 'must not start with "#"');
+  }
+  if (Array.from(value).some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
+    invalid(field, 'must not contain control characters');
+  }
+}
+
+/**
+ * Normalizes a label colour to `#rrggbb`.
+ *
+ * A 3-digit shorthand is expanded and any hex case is accepted; the result is
+ * the form every model field uses, so a caller can compare colours without
+ * knowing which platform answered.
+ */
+export function normalizeLabelColor(value: unknown): string {
+  if (typeof value !== 'string') {
+    invalid('color', `expected a hex colour such as #d73a4a, received ${describe(value)}`);
+  }
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim());
+  if (match === null) {
+    invalid('color', 'expected a 3- or 6-digit hex colour such as #d73a4a');
+  }
+  const hex = match[1] as string;
+  const expanded =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((digit) => digit + digit)
+          .join('')
+      : hex;
+  return `#${expanded.toLowerCase()}`;
+}
 /** The encodings a `pushFiles` entry may declare. */
 export const PUSH_FILE_ENCODINGS = ['utf8', 'base64'] as const;
 

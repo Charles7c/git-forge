@@ -69,7 +69,7 @@ describe.each(PROVIDERS)('repository contract (%s)', (provider) => {
   });
 
   it('refuses a directory listing as INVALID_ARGUMENT', async () => {
-    // An array response means "this is a directory"; v0.1.0 has no directory
+    // An array response means "this is a directory"; the SDK has no directory
     // listing, so it is rejected rather than guessed at.
     const { client } = buildClient({}, [
       { match: /.*/, responses: [{ body: [{ name: 'nested', type: 'file' }] }] },

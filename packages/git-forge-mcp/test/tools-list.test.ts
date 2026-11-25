@@ -9,7 +9,7 @@ import type { McpHarness } from './helpers/mcpHarness.js';
  * `tools/list` contract.
  *
  * The published tool list is the server's whole public surface, so it is asserted
- * three ways: the exact 23 names, per-tool schema facts the caller depends on
+ * three ways: the exact 29 names, per-tool schema facts the caller depends on
  * (provider enum, native issue id), and the generated platform sentences that
  * keep a description from drifting away from the capability tables.
  */
@@ -21,36 +21,42 @@ describe('tools/list', () => {
     harness = undefined;
   });
 
-  it('lists exactly the 23 documented git_ tools', async () => {
+  it('lists exactly the 29 documented git_ tools', async () => {
     harness = await connect();
     const { tools } = await harness.client.listTools();
 
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(29);
     expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
     for (const tool of tools) {
       expect(tool.name.startsWith('git_')).toBe(true);
     }
   });
 
-  it('covers all five domains', async () => {
+  it('covers every domain', async () => {
     harness = await connect();
     const { tools } = await harness.client.listTools();
     const names = tools.map((tool) => tool.name);
 
-    // Issue (6), Pull request (6), Repository (4), Files (3), Branch/commit (4).
-    expect(names.filter((name) => name.includes('issue'))).toHaveLength(6);
+    // Issue (7), Pull request (6), Repository (4 + stargazers), Files (3),
+    // Branch/commit (4), Release (1), Label (3).
+    expect(names.filter((name) => name.includes('issue'))).toHaveLength(7);
     expect(names.filter((name) => name.includes('pull_request'))).toHaveLength(6);
     expect(
       names.filter((name) =>
         ['git_list_repositories', 'git_get_repository', 'git_create_repository'].includes(name),
       ),
     ).toHaveLength(3);
+    expect(names).toContain('git_list_stargazers');
     expect(names).toContain('git_get_file_contents');
+    // `commit` matches git_list_commits and git_get_commit only; the issue-event
+    // tool ends in `_events`, so it does not leak into this count.
     expect(names.filter((name) => name.includes('commit'))).toHaveLength(2);
     expect(names.filter((name) => name.includes('branch'))).toHaveLength(2);
     expect(names).toContain('git_create_or_update_file');
     expect(names).toContain('git_delete_file');
     expect(names).toContain('git_push_files');
+    expect(names).toContain('git_list_releases');
+    expect(names.filter((name) => name.includes('label'))).toHaveLength(3);
   });
 
   it('gives every tool a non-empty description mentioning the platforms', async () => {
@@ -66,15 +72,30 @@ describe('tools/list', () => {
     }
   });
 
-  it('adds a pagination/retry sentence to every list tool', async () => {
+  it('adds a pagination/retry sentence to every list tool that paginates', async () => {
     harness = await connect();
     const { tools } = await harness.client.listTools();
-    const listTools = tools.filter((tool) => tool.name.startsWith('git_list_'));
+    // `git_list_issue_events` is excluded on purpose: Gitee and AtomGit expose
+    // their operation log with no page parameter, so claiming auto-pagination
+    // there would be false. Its description states the single-request behaviour.
+    const listTools = tools.filter(
+      (tool) => tool.name.startsWith('git_list_') && tool.name !== 'git_list_issue_events',
+    );
 
     expect(listTools.length).toBeGreaterThan(0);
     for (const tool of listTools) {
       expect(tool.description ?? '').toContain('auto-paginate');
     }
+  });
+
+  it('states the single-request behaviour of the issue-event log', async () => {
+    harness = await connect();
+    const { tools } = await harness.client.listTools();
+    const events = tools.find((tool) => tool.name === 'git_list_issue_events');
+    const description = events?.description ?? '';
+
+    expect(description).not.toContain('auto-paginate');
+    expect(description).toContain('no page parameter');
   });
 
   it('exposes provider as a three-value enum on every tool', async () => {
@@ -122,7 +143,8 @@ describe('tools/list', () => {
     });
     const { tools } = await harness.client.listTools();
 
-    // 11 write tools cover the 12 write capabilities (create_or_update does two).
+    // 13 write tools: create_or_update_file covers files.create and files.update,
+    // and ensure_label composes labels.list with labels.create.
     const blocked = tools.filter((tool) =>
       (tool.description ?? '').includes('blocked in readonly mode'),
     );
@@ -131,11 +153,13 @@ describe('tools/list', () => {
         'git_create_branch',
         'git_create_issue',
         'git_create_issue_comment',
+        'git_create_label',
         'git_create_or_update_file',
         'git_create_pull_request',
         'git_create_pull_request_comment',
         'git_create_repository',
         'git_delete_file',
+        'git_ensure_label',
         'git_merge_pull_request',
         'git_push_files',
         'git_update_issue',
@@ -143,14 +167,14 @@ describe('tools/list', () => {
     );
   });
 
-  it('still lists all 23 tools in read-only mode', async () => {
+  it('still lists all 29 tools in read-only mode', async () => {
     harness = await connect({
       tokens: {},
       readonly: true,
       configured: [],
     });
     const { tools } = await harness.client.listTools();
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(29);
   });
 });
 

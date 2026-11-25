@@ -11,6 +11,9 @@
  */
 import { issueNumberFields } from '../../core/issue-number.js';
 import { invalidArgumentError } from '../../core/errors.js';
+import { normalizeLabelColor } from '../../core/validate.js';
+import { buildCommitAuthor, readGitAuthor } from '../commit-author.js';
+import { deriveVisibility, isPrivateVisibility } from '../visibility.js';
 import type {
   Branch,
   Comment,
@@ -20,12 +23,17 @@ import type {
   FileContent,
   FileWriteResult,
   Issue,
+  IssueEvent,
   IssueState,
+  Label,
   Provider,
   PullRequest,
   PullRequestRef,
   PullRequestState,
+  Release,
   Repository,
+  RepositoryVisibility,
+  Stargazer,
   UserRef,
 } from '../../core/types.js';
 
@@ -141,6 +149,36 @@ export function mapUsers(raw: unknown): UserRef[] | undefined {
 }
 
 /**
+ * Maps a GitHub top-level *account* object, requiring a real `login`.
+ *
+ * Deliberately stricter than {@link mapUser}, which falls back to `name`: a
+ * display name is not an account identifier, and promoting it would attribute a
+ * commit to a login that does not exist. A `null` account means GitHub could not
+ * link the commit email, which is a normal outcome and maps to `undefined`
+ * rather than to a fabricated identity.
+ */
+export function mapAccount(raw: unknown): UserRef | undefined {
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  const record = asRecord(raw);
+  const login = str(record.login);
+  if (login === undefined) {
+    return undefined;
+  }
+  const user: UserRef = { login };
+  const name = str(record.name);
+  const avatar = str(record.avatar_url);
+  if (name !== undefined) {
+    user.name = name;
+  }
+  if (avatar !== undefined) {
+    user.avatar_url = avatar;
+  }
+  return user;
+}
+
+/**
  * Folds a GitHub issue state into the binary contract.
  *
  * GitHub has exactly two states; anything else is treated as `closed` so an
@@ -206,6 +244,13 @@ export function mapIssue(owner: string, repo: string, raw: unknown): Issue {
   const closedAt = str(record.closed_at);
   if (closedAt !== undefined) {
     issue.closed_at = closedAt;
+  }
+  // GitHub has no native state beyond `open`/`closed`, so `native_state` is
+  // omitted rather than echoing `state`. The close reason is separate and may
+  // be absent on issues closed before the field existed.
+  const stateReason = str(record.state_reason);
+  if (stateReason !== undefined) {
+    issue.state_reason = stateReason;
   }
   return issue;
 }
@@ -279,19 +324,36 @@ export function mapPullRequest(
   return draft;
 }
 
-/** Maps one GitHub repository. */
+/**
+ * Maps one GitHub repository.
+ *
+ * `private` and `visibility` are both derived from the same evidence so they can
+ * never disagree; a payload that omits every visibility field reports `unknown`
+ * and `private: false`, and the documentation says plainly that only
+ * `visibility` is the three-way answer.
+ */
 export function mapRepository(owner: string, repo: string, raw: unknown): Repository {
   const record = asRecord(raw);
+  const visibility: RepositoryVisibility = deriveVisibility({
+    visibility: record.visibility,
+    private: record.private,
+    internal: record.internal,
+  });
   const repository: Repository = {
     provider: PROVIDER,
     owner: str(asRecord(record.owner).login) ?? owner,
     repo,
     name: str(record.name) ?? repo,
     html_url: str(record.html_url) ?? '',
-    private: bool(record.private) === true,
+    private: isPrivateVisibility(visibility),
+    visibility,
     default_branch: str(record.default_branch) ?? '',
   };
 
+  const stargazers = num(record.stargazers_count);
+  if (stargazers !== undefined) {
+    repository.stargazers_count = stargazers;
+  }
   const fullName = str(record.full_name);
   if (fullName !== undefined) {
     repository.full_name = fullName;
@@ -387,7 +449,7 @@ export function mapBranch(owner: string, repo: string, raw: unknown, webBaseUrl:
   return branch;
 }
 
-/** Maps commit authorship metadata. */
+/** Maps commit authorship metadata, requiring a name (used for the committer). */
 export function mapCommitAuthor(raw: unknown): CommitAuthor | undefined {
   const record = asRecord(raw);
   const name = str(record.name);
@@ -414,7 +476,14 @@ export function mapCommit(owner: string, repo: string, raw: unknown): Commit {
     html_url: str(record.html_url) ?? '',
   };
 
-  const author = mapCommitAuthor(payload.author);
+  // The author block is completed from the linked account, so a commit whose Git
+  // payload lacks a name still gets its attribution. Only the author side is
+  // consulted: the committer is a web-flow or bot account after a rebase or
+  // squash merge, and crediting it would name the wrong contributor.
+  const author = buildCommitAuthor(
+    readGitAuthor(asRecord(payload.author)),
+    mapAccount(record.author),
+  );
   if (author !== undefined) {
     commit.author = author;
   }
@@ -495,6 +564,148 @@ export function buildFileWriteResult(inputs: FileWriteInputs): FileWriteResult {
     result.file_html_urls = inputs.fileHtmlUrls;
   }
   return result;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Timeline, labels, releases, stargazers                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Maps one GitHub timeline entry to zero or one label event.
+ *
+ * GitHub's timeline mixes dozens of event kinds (`commented`, `mentioned`,
+ * `cross-referenced`, …); only `labeled` and `unlabeled` are modelled here and
+ * everything else is dropped, so a caller never has to filter. The list shape is
+ * shared with the other adapters, which can report more than one event per
+ * upstream entry.
+ */
+export function mapIssueEvents(owner: string, repo: string, raw: unknown): IssueEvent[] {
+  const record = asRecord(raw);
+  const event = str(record.event);
+  if (event !== 'labeled' && event !== 'unlabeled') {
+    return [];
+  }
+  const created = str(record.created_at);
+  if (created === undefined) {
+    return [];
+  }
+  const mapped: IssueEvent = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    type: event,
+    created_at: created,
+  };
+  const label = str(asRecord(record.label).name);
+  if (label !== undefined) {
+    mapped.label = label;
+  }
+  const actor = mapAccount(record.actor);
+  if (actor !== undefined) {
+    mapped.actor = actor;
+  }
+  return [mapped];
+}
+
+/** Maps one GitHub label, normalizing its colour to `#rrggbb`. */
+export function mapLabel(owner: string, repo: string, raw: unknown): Label {
+  const record = asRecord(raw);
+  const label: Label = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    name: str(record.name) ?? '',
+    color: normalizeLabelColorOrDefault(record.color),
+  };
+  const description = str(record.description);
+  if (description !== undefined) {
+    label.description = description;
+  }
+  return label;
+}
+
+/**
+ * Renders a colour for GitHub's write endpoint, which wants six hex digits with
+ * no `#`.
+ *
+ * The contract accepts either form and always answers the prefixed one, so the
+ * translation happens exactly here.
+ */
+export function labelColorForGitHub(color: string): string {
+  return normalizeLabelColor(color).slice(1);
+}
+
+/**
+ * Normalizes a platform colour, tolerating a malformed value.
+ *
+ * A model field is not the place to reject an upstream payload: a label with an
+ * unparseable colour is still a usable label, so the colour falls back to the
+ * neutral `#ededed` GitHub itself uses.
+ */
+export function normalizeLabelColorOrDefault(raw: unknown): string {
+  try {
+    return normalizeLabelColor(raw);
+  } catch {
+    return '#ededed';
+  }
+}
+
+/**
+ * Maps one GitHub release.
+ *
+ * GitHub is the only platform that reports `published_at`, `draft` and a
+ * release `html_url`, so all three are read here and left absent elsewhere.
+ */
+export function mapRelease(owner: string, repo: string, raw: unknown): Release {
+  const record = asRecord(raw);
+  const tagName = str(record.tag_name) ?? '';
+  const release: Release = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    tag_name: tagName,
+    name: str(record.name) ?? tagName,
+  };
+  const publishedAt = str(record.published_at);
+  if (publishedAt !== undefined) {
+    release.published_at = publishedAt;
+  }
+  const htmlUrl = str(record.html_url);
+  if (htmlUrl !== undefined) {
+    release.html_url = htmlUrl;
+  }
+  const draft = bool(record.draft);
+  if (draft !== undefined) {
+    release.draft = draft;
+  }
+  const prerelease = bool(record.prerelease);
+  if (prerelease !== undefined) {
+    release.pre_release = prerelease;
+  }
+  return release;
+}
+
+/**
+ * Maps one GitHub stargazer.
+ *
+ * The `starred_at` field exists only when the request carried the
+ * `application/vnd.github.star+json` accept header; without it GitHub answers a
+ * bare user object, which maps to a stargazer with no timestamp.
+ */
+export function mapStargazer(owner: string, repo: string, raw: unknown): Stargazer | undefined {
+  const record = asRecord(raw);
+  // With the star media type the user is nested under `user`; without it the
+  // entry *is* the user.
+  const user = mapAccount(record.user) ?? mapUser(record);
+  if (user === undefined) {
+    return undefined;
+  }
+  const stargazer: Stargazer = { provider: PROVIDER, owner, repo, user };
+  const starredAt = str(record.starred_at);
+  if (starredAt !== undefined) {
+    stargazer.starred_at = starredAt;
+  }
+  return stargazer;
 }
 
 /* -------------------------------------------------------------------------- */

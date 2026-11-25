@@ -9,7 +9,7 @@
  * 3. {@link scrubSecrets} is the last line of defense, applied to every
  *    `GitForgeError` message as it is constructed.
  *
- * v0.1.0 authenticates with `Authorization: Bearer`, so tokens normally stay out
+ * The SDK authenticates with `Authorization: Bearer`, so tokens normally stay out
  * of URLs entirely. The query-style path is still supported for compatibility,
  * which is why this module cannot be dropped.
  */

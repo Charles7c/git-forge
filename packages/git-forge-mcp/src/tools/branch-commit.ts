@@ -79,13 +79,27 @@ export function registerBranchCommitTools(server: McpServer, ctx: ToolContext): 
     {
       title: 'List commits',
       description: composeDescription({
-        summary: 'Lists commits, optionally from a specific branch, tag or sha.',
+        summary:
+          'Lists commits, optionally from a specific branch, tag or sha and within a ' +
+          'since/until window. Both bounds are ISO 8601 with an explicit zone and are ' +
+          'filtered by the platform. author.user is the linked account and is absent ' +
+          'whenever the platform could not match the commit email.',
         platforms: platformSummary(snapshot, 'commits.list'),
         notes: [LISTING_NOTE],
       }),
       inputSchema: {
         ...repoSchemas,
         branch: z.string().min(1).optional().describe('Branch, tag or sha to start from.'),
+        since: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Only commits at or after this instant, e.g. 2026-01-31T00:00:00Z.'),
+        until: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Only commits at or before this instant, e.g. 2026-02-28T00:00:00Z.'),
         maxPages: maxPagesSchema,
       },
     },
@@ -96,6 +110,8 @@ export function registerBranchCommitTools(server: McpServer, ctx: ToolContext): 
           owner: args.owner,
           repo: args.repo,
           branch: args.branch,
+          since: args.since,
+          until: args.until,
           maxPages: args.maxPages,
         }),
       ),

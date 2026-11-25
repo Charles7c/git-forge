@@ -59,38 +59,55 @@ Tokens are sent in `Authorization: Bearer`, not query strings. Configure only th
 
 ## Capabilities
 
-| Domain and operation                                                       | GitHub | Gitee  | AtomGit |
-| -------------------------------------------------------------------------- | ------ | ------ | ------- |
-| Issues: list, get, create, update, list/add comments                       | Yes    | Yes    | Yes     |
-| Pull requests: list, get, create, merge, list/add conversation comments    | Yes    | Yes    | Yes     |
-| PR list with `head` filter                                                 | Yes    | Yes    | No (P)  |
-| Repositories: list, get, create, read file contents                        | Yes    | Yes    | Yes     |
-| Files: create/update, delete a single file                                 | Yes    | Yes    | Yes     |
-| `pushFiles`: one commit, one or more files                                 | Yes    | Yes    | No (P)  |
-| Branches: list/create; commits: list/get                                   | Yes    | Yes    | Yes     |
-| Search, tags/releases, reviews, notifications, Actions, discussions, gists | No (S) | No (S) | No (S)  |
+| Domain and operation                                                 | GitHub | Gitee  | AtomGit |
+| -------------------------------------------------------------------- | ------ | ------ | ------- |
+| Issues: list, get, create, update, list/add comments                 | Yes    | Yes    | Yes     |
+| Issue label events (labeled / unlabeled / unknown)                   | Yes    | Yes    | Yes     |
+| Pull requests: list, get, create, merge, list/add conversation notes | Yes    | Yes    | Yes     |
+| PR list with `head` filter                                           | Yes    | Yes    | No (P)  |
+| Repositories: list, get, create, read file contents                  | Yes    | Yes    | Yes     |
+| Commit author account (`author.user`)                                | Yes    | Yes    | Yes     |
+| Commits: `since` / `until` server-side window                        | Yes    | Yes    | Yes     |
+| Stargazers: current count (`stargazers_count`)                       | Yes    | Yes    | Yes     |
+| Stargazers: list users, and `starred_at` when asked                  | Yes    | No (P) | Yes     |
+| Files: create/update, delete a single file                           | Yes    | Yes    | Yes     |
+| `pushFiles`: one commit, one or more files                           | Yes    | Yes    | No (P)  |
+| Branches: list/create; commits: list/get                             | Yes    | Yes    | Yes     |
+| Releases: list                                                       | Yes    | Yes    | Yes     |
+| Labels: list, create, ensure-exists                                  | Yes    | Yes    | Yes     |
+| Search, tags, reviews, notifications, Actions, discussions, gists    | No (S) | No (S) | No (S)  |
 
 Yes = implemented, not a guarantee about a live account. P = this adapter has no corresponding provider operation: it rejects before HTTP rather than dropping a filter or splitting a commit. S = outside this SDK's scope; there is no such method/tool. Use `capabilities(provider)` and `paramCapabilities(provider)` to choose an alternative **explicitly**. For example, single-file changes are available on AtomGit, but several such calls are not atomic.
 
-**Result details.** `Issue.number` is always the original identifier as a string, including leading zeros. `number_as_number` is present only for safe decimal digits; PR numbers are numeric. Labels are strings. Gitee `progressing` maps to `open`, `rejected` to `closed`; GitHub issues exclude PRs. A merged PR is `closed` with `merged: true`. A comment may link to its parent or have no `html_url`; an AtomGit PR may lack `head`. `getFileContents` reads a file, not a directory. File writes return `commit_sha` and paths. `pushFiles` accepts nonempty `create`/`update`/`delete` actions, not upsert.
+Gitee's stargazer listing is the one **P** that is not a missing endpoint: `/stargazers` is routable but answers `[]` for every repository measured, including large ones, so declaring it unsupported is more honest than returning an empty list.
 
-### How the 23 tools compare to GitHub MCP
+**Result details.** `Issue.number` is always the original identifier as a string, including leading zeros. `number_as_number` is present only for safe decimal digits; PR numbers are numeric. Labels are strings. Gitee `progressing` maps to `open` and `rejected` to `closed`, while `native_state` and `state_label` keep the platform's own words. `state_reason` is GitHub-only and may be absent on issues closed before the field existed. `restricted` is set only where the platform says so (Gitee `security_hole`, AtomGit `visibility_reason`). GitHub issues exclude PRs. A merged PR is `closed` with `merged: true`. A comment may link to its parent or have no `html_url`; an AtomGit PR may lack `head`. `getFileContents` reads a file, not a directory. File writes return `commit_sha` and paths. `pushFiles` accepts nonempty `create`/`update`/`delete` actions, not upsert.
+
+**Visibility and stars.** `Repository.visibility` is a four-way answer (`public` / `private` / `internal` / `unknown`), and only a field that names the fact — `visibility: 'public'` or `public: true` — yields `public`. A bare `private: false` answers `unknown`, because GitHub Enterprise `internal` repositories report it too. `stargazers_count` is omitted rather than `0` when the payload carries no count. `Commit.author.user` is the author account only: it requires a real `login` and is never synthesised from a display name or an email, while the committer (frequently `web-flow` or a bot after a squash merge) is never substituted for it. The author block is produced from any one of the Git-side name, email or date, so an email-only commit keeps its email instead of losing it.
+
+**Releases.** Entries are sorted newest-first locally after being retrieved, because upstream order is not reliable once pages are merged; entries without a timestamp sort last. Only GitHub reports a publication time, a release URL and a draft flag. Gitee and AtomGit report a creation time and no URL: their release pages are not addressable by a derived link (Gitee answers a 302 to a source archive for a non-browser client), so the SDK omits the field instead of fabricating one.
+
+**Labels.** `color` is always normalized to `#rrggbb`; the `#` is stripped for GitHub and Gitee on write and kept for AtomGit. `ensureLabel` lists with `requireComplete` and refuses rather than guessing when the catalog cannot be trusted: `PAGINATION_LIMIT` if the page budget truncated the listing, `PROVIDER_ERROR` if a page is not an array or a row has no usable `name`. Neither case issues a write. It then creates only when the name really is absent, matching case-insensitively; `color` is optional and required only once a create is issued. It is not a conditional create — two concurrent callers can still race, and the loser re-reads once before reporting the upstream error. Descriptions are stored by GitHub only; Gitee and AtomGit accept and drop them, since their create body is `name` + `color`. `git_list_issue_events` reads Gitee's and AtomGit's operation log, which has no page parameter, so those two answer in a single request; all three return events oldest-first, and `type: 'unknown'` means a label change was reported whose direction could not be read.
+
+### How the 29 tools compare to GitHub MCP
 
 Names in the middle column are our tools **without** their `git_` prefix. The right column lists counterparts in the [official GitHub MCP README at a fixed revision](https://github.com/github/github-mcp-server/blob/9a72d8d38fec18c207cd924b33aa0eb3e186252c/README.md). A counterpart is not a promise of identical parameters or full toolset parity.
 
 | Domain            | git-forge tools                                                                                                                                    | Official counterpart(s), in the same order                                                                                                                                        |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue (6)         | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `list_issue_comments`, `create_issue_comment`                                          | `list_issues`, `issue_read:get`, `issue_write:create`, `issue_write:update`, `issue_read:get_comments`, `add_issue_comment`                                                       |
+| Issue (7)         | `list_issues`, `get_issue`, `create_issue`, `update_issue`, `list_issue_comments`, `create_issue_comment`, `list_issue_events`                     | `list_issues`, `issue_read:get`, `issue_write:create`, `issue_write:update`, `issue_read:get_comments`, `add_issue_comment`                                                       |
 | PR (6)            | `list_pull_requests`, `get_pull_request`, `create_pull_request`, `merge_pull_request`, `list_pull_request_comments`, `create_pull_request_comment` | `list_pull_requests`, `pull_request_read:get`, `create_pull_request`, `merge_pull_request`, `pull_request_read:get_comments`, `add_issue_comment` (PR conversation; not a review) |
-| Repository (4)    | `list_repositories`, `get_repository`, `create_repository`, `get_file_contents`                                                                    | First two are **git-forge additions**, not independent tools in that README; `create_repository`, `get_file_contents`                                                             |
+| Repository (5)    | `list_repositories`, `get_repository`, `create_repository`, `list_stargazers`, `get_file_contents`                                                 | First four are **git-forge additions**, not independent tools in that README; `create_repository`, `get_file_contents`                                                            |
 | Files (3)         | `create_or_update_file`, `delete_file`, `push_files`                                                                                               | `create_or_update_file`, `delete_file`, `push_files`                                                                                                                              |
 | Branch/commit (4) | `list_branches`, `create_branch`, `list_commits`, `get_commit`                                                                                     | `list_branches`, `create_branch`, `list_commits`, `get_commit`                                                                                                                    |
+| Release (1)       | `list_releases`                                                                                                                                    | `list_releases`                                                                                                                                                                   |
+| Label (3)         | `list_labels`, `create_label`, `ensure_label`                                                                                                      | Not in that README: git-forge additions for version and status labels                                                                                                             |
 
 `tool:method` means selecting a method on one upstream tool, not two upstream tool names. The SDK's `bulk` and capability queries are library helpers, not MCP tools.
 
 ## MCP client setup
 
-Once `@charles7c/git-forge-mcp@0.1.0` is available on npm, use `npx` from Node 20 or newer. `--yes` skips the install prompt so a GUI client can start the server unattended. Both examples start it in read-only mode.
+The commands below pin `0.2.0` so a client keeps starting the version you chose rather than whatever `latest` resolves to. Use `npx` from Node 20 or newer. `--yes` skips the install prompt so a GUI client can start the server unattended. Both examples start it in read-only mode.
 
 **Claude Desktop** (Settings → Developer → Edit Config, `claude_desktop_config.json`) and **Cursor** (user `~/.cursor/mcp.json` or project `.cursor/mcp.json`) use this JSON:
 
@@ -99,7 +116,7 @@ Once `@charles7c/git-forge-mcp@0.1.0` is available on npm, use `npx` from Node 2
   "mcpServers": {
     "git-forge": {
       "command": "npx",
-      "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
+      "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
       "env": { "GIT_FORGE_READONLY": "1" }
     }
   }
@@ -115,7 +132,7 @@ Once `@charles7c/git-forge-mcp@0.1.0` is available on npm, use `npx` from Node 2
       "git-forge": {
         "type": "stdio",
         "command": "npx",
-        "args": ["--yes", "@charles7c/git-forge-mcp@0.1.0"],
+        "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
         "env": { "GIT_FORGE_READONLY": "1" }
       }
     }
@@ -123,11 +140,11 @@ Once `@charles7c/git-forge-mcp@0.1.0` is available on npm, use `npx` from Node 2
 }
 ```
 
-- If a Windows GUI cannot launch `npx` directly, use `"command": "cmd.exe"` and `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.1.0"]`. If Node and npm are not on the client's `PATH`, use the absolute-path setup below.
+- If a Windows GUI cannot launch `npx` directly, use `"command": "cmd.exe"` and `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.2.0"]`. If Node and npm are not on the client's `PATH`, use the absolute-path setup below.
 - If your npm mirror has not synced the release, optionally add `"npm_config_registry": "https://registry.npmjs.org/"` to the server's `env` object.
-- Before publication or for offline use, install the local tarballs as described above. Set `command` to the absolute Node path from `node -p "process.execPath"`. Run `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"` from that installation, replace the trailing `package.json` with `dist/index.js`, and use that absolute path as the only `args` entry.
+- For offline use, install the local tarballs as described above. Set `command` to the absolute Node path from `node -p "process.execPath"`. Run `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"` from that installation, replace the trailing `package.json` with `dist/index.js`, and use that absolute path as the only `args` entry.
 
-Merge the entry with existing settings and restart the client. Expect 23 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the launch command and stderr; stdout is for MCP only.
+Merge the entry with existing settings and restart the client. Expect 29 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the launch command and stderr; stdout is for MCP only.
 
 After initializing an MCP session, send this read-only JSON-RPC request from the client. The names below are fictional; replace them with a repository you are authorized to read.
 

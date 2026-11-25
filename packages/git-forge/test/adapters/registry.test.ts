@@ -67,6 +67,16 @@ describe('adapter registry', () => {
     expect(matrix).toEqual({ github: 'supported', gitee: 'supported', atomgit: 'unsupported' });
   });
 
+  it('records the stargazer matrix as GitHub yes / Gitee no / AtomGit yes', () => {
+    const matrix = Object.fromEntries(
+      PROVIDERS.map((provider) => [
+        provider,
+        getAdapter(provider).capabilities['repos.listStargazers'],
+      ]),
+    );
+    expect(matrix).toEqual({ github: 'supported', gitee: 'unsupported', atomgit: 'supported' });
+  });
+
   it('records the head filter matrix as GitHub yes / Gitee yes / AtomGit no', () => {
     const matrix = Object.fromEntries(
       PROVIDERS.map((provider) => [
@@ -77,7 +87,7 @@ describe('adapter registry', () => {
     expect(matrix).toEqual({ github: 'supported', gitee: 'supported', atomgit: 'unsupported' });
   });
 
-  it('covers all 24 capabilities with an implementation on every provider', () => {
+  it('covers all 29 capabilities with an implementation on every provider', () => {
     // Method names are checked by type, so here the runtime presence is asserted:
     // an `unsupported` entry still has to be a callable function.
     const methods = [
@@ -87,6 +97,7 @@ describe('adapter registry', () => {
       'updateIssue',
       'listIssueComments',
       'createIssueComment',
+      'listIssueEvents',
       'listPullRequests',
       'getPullRequest',
       'createPullRequest',
@@ -97,6 +108,7 @@ describe('adapter registry', () => {
       'getRepository',
       'createRepository',
       'getFileContents',
+      'listStargazers',
       'createFile',
       'updateFile',
       'deleteFile',
@@ -105,6 +117,9 @@ describe('adapter registry', () => {
       'createBranch',
       'listCommits',
       'getCommit',
+      'listReleases',
+      'listLabels',
+      'createLabel',
     ] as const;
     expect(methods).toHaveLength(CAPABILITY_IDS.length);
 

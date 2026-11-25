@@ -14,6 +14,8 @@
  *   chain, which yields exactly one commit.
  */
 import { selectIssueRows } from '../issues.js';
+import { labelKeyOf, selectLabelRows } from '../labels.js';
+import { eventKeyOf, sortEventsOldestFirst } from '../events.js';
 import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
@@ -24,8 +26,10 @@ import type {
   BranchCommitDomain,
   FilesDomain,
   IssueDomain,
+  LabelDomain,
   ProviderAdapter,
   PullRequestDomain,
+  ReleaseDomain,
   RepositoryDomain,
   PushFilesInput,
   WithProvider,
@@ -37,18 +41,24 @@ import {
   deriveBranchHtmlUrl,
   isPullRequestEntry,
   isShaLike,
+  labelColorForGitHub,
   listKey,
   mapBranch,
   mapComment,
   mapCommit,
   mapFileContent,
   mapIssue,
+  mapIssueEvents,
+  mapLabel,
   mapPullRequest,
+  mapRelease,
   mapRepository,
+  mapStargazer,
   normalizeLabels,
   readPushEntries,
   str,
 } from './map.js';
+import { sortReleasesNewestFirst } from '../releases.js';
 import { resolveFileModes } from './tree.js';
 import type { PushPlanEntry } from './map.js';
 import { capabilities, paramCapabilities } from './capabilities.js';
@@ -59,6 +69,7 @@ import type {
   CreateBranchParams,
   CreateCommentParams,
   CreateIssueParams,
+  CreateLabelParams,
   CreateOrUpdateFileParams,
   CreatePullRequestParams,
   CreateRepositoryParams,
@@ -71,15 +82,23 @@ import type {
   GetPullRequestParams,
   GetRepositoryParams,
   Issue,
+  IssueEvent,
+  Label,
   ListBranchesParams,
   ListCommitsParams,
   ListCommentsParams,
+  ListIssueEventsParams,
   ListIssuesParams,
+  ListLabelsParams,
   ListPullRequestsParams,
+  ListReleasesParams,
   ListRepositoriesParams,
+  ListStargazersParams,
   MergePullRequestParams,
   PullRequest,
+  Release,
   Repository,
+  Stargazer,
   UpdateIssueParams,
 } from '../../core/types.js';
 
@@ -151,7 +170,14 @@ function writeResultFromContents(
 
 /** Domain implementation backed by api.github.com. */
 class GitHubAdapter
-  implements IssueDomain, PullRequestDomain, RepositoryDomain, FilesDomain, BranchCommitDomain
+  implements
+    IssueDomain,
+    PullRequestDomain,
+    RepositoryDomain,
+    FilesDomain,
+    BranchCommitDomain,
+    ReleaseDomain,
+    LabelDomain
 {
   readonly provider = 'github' as const;
   readonly capabilities = capabilities;
@@ -241,6 +267,52 @@ class GitHubAdapter
     params: WithProvider<CreateCommentParams>,
   ): Promise<Comment> {
     return this.createComment(ctx, params, `${REPO_PATH}/issues/{number}/comments`);
+  }
+
+  /**
+   * Reads the label timeline.
+   *
+   * The timeline endpoint mixes every event kind, so the mappers drop the rest
+   * and only label mutations are returned. GitHub requires a specific accept
+   * header for this endpoint, which is sent per request.
+   *
+   * Identity and order are two separate guarantees:
+   *
+   * - **deduplication** keys on the native `id` only. It is the one field that
+   *   proves two entries are the same event. An entry without an id is never
+   *   merged with another: a `(event, time, label)` tuple cannot distinguish the
+   *   additions on either side of a same-second removal, and collapsing them
+   *   inverts the resulting state. An id-less entry seen twice is therefore
+   *   reported twice — the timeline shows both, and dropping one is the worse
+   *   mistake.
+   * - **ordering** is restored after the merge, oldest-first and stable, because
+   *   upstream page order is not a chronological contract.
+   */
+  async listIssueEvents(
+    ctx: AdapterCtx,
+    params: WithProvider<ListIssueEventsParams>,
+  ): Promise<IssueEvent[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/issues/{number}/timeline`,
+        pathParams: {
+          owner: params.owner,
+          repo: params.repo,
+          number: String(params.number),
+        },
+        headers: { ...GITHUB_HEADERS, accept: 'application/vnd.github+json' },
+      },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: eventKeyOf(),
+      },
+    );
+    return sortEventsOldestFirst(
+      entries.flatMap((entry) => mapIssueEvents(params.owner, params.repo, entry)),
+    );
   }
 
   /* ---------------------------------------------------------------------- */
@@ -431,11 +503,11 @@ class GitHubAdapter
       headers: GITHUB_HEADERS,
     });
 
-    // GitHub returns an array for a directory path; v0.1.0 has no directory
+    // GitHub returns an array for a directory path; this SDK has no directory
     // listing in the contract, so the call is rejected instead of guessed at.
     if (Array.isArray(response.json)) {
       throw invalidArgumentError(
-        `Invalid \`path\`: "${params.path}" is a directory. v0.1.0 getFileContents reads a single file only.`,
+        `Invalid \`path\`: "${params.path}" is a directory. this SDK reads a single file only.`,
         'github',
       );
     }
@@ -573,6 +645,105 @@ class GitHubAdapter
     });
   }
 
+  /**
+   * Lists stargazers.
+   *
+   * `timestamps: true` asks GitHub for the `starred_at` media type, which is the
+   * only way that field appears. Anonymous callers are refused by GitHub for
+   * this endpoint, so the capability is gated behind a token like any other call.
+   */
+  async listStargazers(
+    ctx: AdapterCtx,
+    params: WithProvider<ListStargazersParams>,
+  ): Promise<Stargazer[]> {
+    const headers =
+      params.timestamps === true
+        ? { ...GITHUB_HEADERS, accept: 'application/vnd.github.star+json' }
+        : GITHUB_HEADERS;
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/stargazers`,
+        ...base(params.owner, params.repo),
+        headers,
+      },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: (raw) => {
+          const record = asRecord(raw);
+          const user = asRecord(record.user ?? record);
+          return listKey(user.id ?? user.login);
+        },
+      },
+    );
+    return entries
+      .map((entry) => mapStargazer(params.owner, params.repo, entry))
+      .filter((entry): entry is Stargazer => entry !== undefined);
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Release                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  async listReleases(
+    ctx: AdapterCtx,
+    params: WithProvider<ListReleasesParams>,
+  ): Promise<Release[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      { method: 'GET', path: `${REPO_PATH}/releases`, ...base(params.owner, params.repo) },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: (raw) => listKey(asRecord(raw).id ?? asRecord(raw).tag_name),
+      },
+    );
+    return sortReleasesNewestFirst(
+      entries.map((entry) => mapRelease(params.owner, params.repo, entry)),
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Label                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  async listLabels(ctx: AdapterCtx, params: WithProvider<ListLabelsParams>): Promise<Label[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      { method: 'GET', path: `${REPO_PATH}/labels`, ...base(params.owner, params.repo) },
+      {
+        maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
+        selectItems: (raw, { response }) =>
+          selectLabelRows(ctx.http, response, params.requireComplete),
+        keyOf: labelKeyOf(),
+      },
+    );
+    return entries.map((entry) => mapLabel(params.owner, params.repo, entry));
+  }
+
+  /**
+   * Creates a label.
+   *
+   * GitHub takes a JSON body and a hex colour without `#`; the contract accepts
+   * either form, so the prefix is stripped here.
+   */
+  async createLabel(ctx: AdapterCtx, params: WithProvider<CreateLabelParams>): Promise<Label> {
+    const response = await ctx.http.request<unknown>({
+      method: 'POST',
+      path: `${REPO_PATH}/labels`,
+      ...base(params.owner, params.repo),
+      body: {
+        name: params.name,
+        color: labelColorForGitHub(params.color),
+        description: params.description,
+      },
+    });
+    return mapLabel(params.owner, params.repo, response.json);
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Branch / Commit                                                        */
   /* ---------------------------------------------------------------------- */
@@ -629,7 +800,7 @@ class GitHubAdapter
       { method: 'GET', path: `${REPO_PATH}/commits`, ...base(params.owner, params.repo) },
       {
         maxPages: params.maxPages,
-        query: { sha: params.branch },
+        query: { sha: params.branch, since: params.since, until: params.until },
         selectItems: (raw) => asArray(raw),
         keyOf: (raw) => listKey(asRecord(raw).sha),
       },

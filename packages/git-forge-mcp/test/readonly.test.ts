@@ -38,7 +38,7 @@ describe('read-only mode', () => {
     { GITKIT_READONLY: '1' },
     { GIT_FORGE_READONLY: '1', GITKIT_READONLY: '0' },
     { GIT_FORGE_READONLY: '0', GITKIT_READONLY: '1' },
-  ])('blocks all 11 write tools with zero HTTP for %o', async (env) => {
+  ])('blocks all 14 write tools with zero HTTP for %o', async (env) => {
     harness = await connect(
       readConfig({
         ...env,
@@ -49,7 +49,7 @@ describe('read-only mode', () => {
       WOULD_SUCCEED,
     );
 
-    expect(WRITE_CAPABILITIES.size).toBe(12);
+    expect(WRITE_CAPABILITIES.size).toBe(13);
 
     const calls: { name: string; arguments: Record<string, unknown> }[] = [
       {
@@ -117,11 +117,21 @@ describe('read-only mode', () => {
         name: 'git_create_branch',
         arguments: { provider: 'github', owner: 'o', repo: 'r', name: 'n', from: 'dev' },
       },
+      {
+        name: 'git_create_label',
+        arguments: { provider: 'github', owner: 'o', repo: 'r', name: '5.0.0', color: '#d73a4a' },
+      },
+      // `ensure_label` composes list + create, so it must be blocked by the same
+      // gate as a bare create rather than slipping through as a read.
+      {
+        name: 'git_ensure_label',
+        arguments: { provider: 'github', owner: 'o', repo: 'r', name: '5.0.0', color: '#d73a4a' },
+      },
     ];
 
-    // 11 tools cover the 12 write capabilities: create_or_update_file serves
-    // both files.create and files.update.
-    expect(calls).toHaveLength(11);
+    // 13 tools: create_or_update_file covers files.create and files.update, and
+    // ensure_label is a composition over labels.create rather than a capability.
+    expect(calls).toHaveLength(13);
 
     for (const call of calls) {
       const result = await harness.client.callTool(call);

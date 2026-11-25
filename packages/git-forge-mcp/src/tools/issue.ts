@@ -215,4 +215,40 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
         }),
       ),
   );
+
+  server.registerTool(
+    'git_list_issue_events',
+    {
+      title: 'List issue label events',
+      description: composeDescription({
+        summary:
+          'Lists label mutations for one issue — the only reliable record of when an issue ' +
+          'was tagged or moved, since any edit rewrites updated_at. `type` is labeled, ' +
+          'unlabeled or unknown: unknown means the platform reported a label change whose ' +
+          'direction could not be read (AtomGit logs it as a free-text sentence), so the ' +
+          'event happened but must not be treated as an addition. `label` is omitted when ' +
+          'the platform reports the change only in prose. Entries come back oldest-first.',
+        platforms: platformSummary(snapshot, 'issues.listEvents'),
+        notes: [
+          'Gitee and AtomGit record this as an operation log with no page parameter, so ' +
+            'those two answer in a single request and maxPages does not apply.',
+        ],
+      }),
+      inputSchema: {
+        ...repoSchemas,
+        number: issueNumberSchema,
+        maxPages: maxPagesSchema,
+      },
+    },
+    (args) =>
+      wrap(() =>
+        ctx.client.listIssueEvents({
+          provider: args.provider,
+          owner: args.owner,
+          repo: args.repo,
+          number: args.number,
+          maxPages: args.maxPages,
+        }),
+      ),
+  );
 }

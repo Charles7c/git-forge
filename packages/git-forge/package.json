@@ -1,6 +1,6 @@
 {
   "name": "@charles7c/git-forge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "One GitHub-shaped TypeScript API for the Issue, Pull Request, Repository, Files and Branch/Commit domains of GitHub, Gitee and AtomGit.",
   "keywords": [
     "github",

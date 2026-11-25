@@ -38,7 +38,7 @@ async function expectGitForgeError(promise: Promise<unknown>): Promise<GitForgeE
 }
 
 describe('atomgit adapter capability table', () => {
-  it('declares all 24 capabilities with pushFiles as the only gap', () => {
+  it('declares all 29 capabilities with pushFiles as the only gap', () => {
     expectCompleteCapabilityTable(atomgitAdapter);
     expect(Object.keys(atomgitAdapter.capabilities)).toHaveLength(CAPABILITY_IDS.length);
 
@@ -53,6 +53,10 @@ describe('atomgit adapter capability table', () => {
     expect(paramCapabilityState(atomgitAdapter, 'files.pushFiles.atomic')).toBe('unsupported');
     expect(paramCapabilityState(atomgitAdapter, 'pulls.list.milestoneFilter')).toBe('supported');
     expect(paramCapabilityState(atomgitAdapter, 'issues.list.milestoneFilter')).toBe('supported');
+    // AtomGit always reports `starred_at`, so no special request is needed.
+    expect(paramCapabilityState(atomgitAdapter, 'repos.listStargazers.timestamps')).toBe(
+      'supported',
+    );
   });
 
   it('differs from github and gitee exactly on pushFiles', async () => {

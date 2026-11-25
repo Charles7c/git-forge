@@ -12,6 +12,9 @@
  */
 import { issueNumberFields } from '../../core/issue-number.js';
 import { invalidArgumentError } from '../../core/errors.js';
+import { normalizeLabelColor } from '../../core/validate.js';
+import { buildCommitAuthor, readGitAuthor } from '../commit-author.js';
+import { deriveVisibility, isPrivateVisibility } from '../visibility.js';
 import type {
   Branch,
   Comment,
@@ -21,12 +24,18 @@ import type {
   FileContent,
   FileWriteResult,
   Issue,
+  IssueEvent,
+  IssueEventType,
   IssueState,
+  Label,
   Provider,
   PullRequest,
   PullRequestRef,
   PullRequestState,
+  Release,
   Repository,
+  RepositoryVisibility,
+  Stargazer,
   UserRef,
 } from '../../core/types.js';
 
@@ -142,6 +151,41 @@ export function mapUsers(raw: unknown): UserRef[] | undefined {
 }
 
 /**
+ * Maps Gitee's singular `assignee` field to a one-element list.
+ *
+ * The field is `null` when nobody is assigned, which is a real answer and maps
+ * to `undefined` rather than to an empty array, so a caller can tell "not
+ * assigned" from "the payload said nothing".
+ */
+export function mapSingleAssignee(raw: unknown): UserRef[] | undefined {
+  const assignee = mapUser(raw);
+  return assignee === undefined ? undefined : [assignee];
+}
+
+/** Maps a Gitee top-level account object, requiring a real `login`. */
+export function mapAccount(raw: unknown): UserRef | undefined {
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  const record = asRecord(raw);
+  // A display name is not an account identifier; only `login` names one.
+  const login = str(record.login);
+  if (login === undefined) {
+    return undefined;
+  }
+  const user: UserRef = { login };
+  const name = str(record.name);
+  const avatar = str(record.avatar_url);
+  if (name !== undefined) {
+    user.name = name;
+  }
+  if (avatar !== undefined) {
+    user.avatar_url = avatar;
+  }
+  return user;
+}
+
+/**
  * Folds Gitee's four issue states into the binary contract.
  *
  * `progressing` stays `open`: `finished_at` is null for those issues, so
@@ -196,7 +240,9 @@ export function mapIssue(owner: string, repo: string, raw: unknown): Issue {
   if (user !== undefined) {
     issue.user = user;
   }
-  const assignees = mapUsers(record.assignees);
+  // Gitee sends a single `assignee` object, not an `assignees` array: reading
+  // only the plural field silently dropped every assignee.
+  const assignees = mapUsers(record.assignees) ?? mapSingleAssignee(record.assignee);
   if (assignees !== undefined) {
     issue.assignees = assignees;
   }
@@ -207,6 +253,20 @@ export function mapIssue(owner: string, repo: string, raw: unknown): Issue {
   const closedAt = str(record.finished_at) ?? str(record.closed_at);
   if (closedAt !== undefined) {
     issue.closed_at = closedAt;
+  }
+  // Gitee has four native states; the normalized pair would hide which of the
+  // two folded values applied, so the raw string is preserved.
+  const nativeState = str(record.state);
+  if (nativeState !== undefined) {
+    issue.native_state = nativeState;
+  }
+  const stateLabel = str(asRecord(record.issue_state_detail).title) ?? str(record.issue_state);
+  if (stateLabel !== undefined) {
+    issue.state_label = stateLabel;
+  }
+  // `security_hole` is Gitee's marker for a non-public issue.
+  if (bool(record.security_hole) === true) {
+    issue.restricted = true;
   }
   return issue;
 }
@@ -291,16 +351,26 @@ export function stripGitSuffix(url: string): string {
 export function mapRepository(owner: string, repo: string, raw: unknown): Repository {
   const record = asRecord(raw);
   const rawHtmlUrl = str(record.html_url);
+  const visibility: RepositoryVisibility = deriveVisibility({
+    private: record.private,
+    public: record.public,
+    internal: record.internal,
+  });
   const repository: Repository = {
     provider: PROVIDER,
     owner: str(asRecord(record.namespace).path) ?? owner,
     repo,
     name: str(record.name) ?? repo,
     html_url: rawHtmlUrl === undefined ? '' : stripGitSuffix(rawHtmlUrl),
-    private: bool(record.private) === true,
+    private: isPrivateVisibility(visibility),
+    visibility,
     default_branch: str(record.default_branch) ?? '',
   };
 
+  const stargazers = num(record.stargazers_count);
+  if (stargazers !== undefined) {
+    repository.stargazers_count = stargazers;
+  }
   const fullName = str(record.full_name);
   if (fullName !== undefined) {
     repository.full_name = fullName;
@@ -423,7 +493,14 @@ export function mapCommit(owner: string, repo: string, raw: unknown): Commit {
     html_url: str(record.html_url) ?? '',
   };
 
-  const author = mapCommitAuthor(payload.author);
+  // The top-level `author` is the linked account and is `null` whenever Gitee
+  // could not match the commit email — measured on a real repository: roughly
+  // half the commits. The block is completed from that account, so a commit
+  // whose Git payload lacks a name still keeps its attribution.
+  const author = buildCommitAuthor(
+    readGitAuthor(asRecord(payload.author)),
+    mapAccount(record.author),
+  );
   if (author !== undefined) {
     commit.author = author;
   }
@@ -507,6 +584,148 @@ export function buildFileWriteResult(inputs: FileWriteInputs): FileWriteResult {
     result.file_html_urls = inputs.fileHtmlUrls;
   }
   return result;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Operation log, labels, releases, stargazers                               */
+/* -------------------------------------------------------------------------- */
+
+/** The operation-log action types that describe a label mutation. */
+const LABEL_ACTIONS: Readonly<Record<string, IssueEventType>> = {
+  add_label: 'labeled',
+  remove_label: 'unlabeled',
+};
+
+/**
+ * Maps one Gitee operation-log entry to zero or one label event.
+ *
+ * The label name comes from a structured field, not from `content` (Gitee also
+ * ships a Chinese sentence with HTML entities there, which is a display string).
+ *
+ * Both directions carry the name in `after_change_value`: measured on a real
+ * issue, `remove_label` reported `before_change_value: ''` and
+ * `after_change_value: 'welcome-pr'`. So the two fields are tried in that order
+ * rather than assuming an addition/removal split that Gitee does not follow.
+ *
+ * The list shape matches the other two adapters: AtomGit can report several
+ * labels in one entry, so every adapter answers `IssueEvent[]` and the facade
+ * has one contract to flatten.
+ */
+export function mapIssueEvents(owner: string, repo: string, raw: unknown): IssueEvent[] {
+  const record = asRecord(raw);
+  const type = LABEL_ACTIONS[str(record.action_type) ?? ''];
+  if (type === undefined) {
+    return [];
+  }
+  const created = str(record.created_at);
+  if (created === undefined) {
+    return [];
+  }
+  const mapped: IssueEvent = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    type,
+    created_at: created,
+  };
+  const label = str(record.after_change_value) ?? str(record.before_change_value);
+  if (label !== undefined) {
+    mapped.label = label;
+  }
+  const actor = mapAccount(record.user);
+  if (actor !== undefined) {
+    mapped.actor = actor;
+  }
+  return [mapped];
+}
+
+/** Maps one Gitee label, normalizing its colour to `#rrggbb`. */
+export function mapLabel(owner: string, repo: string, raw: unknown): Label {
+  const record = asRecord(raw);
+  const label: Label = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    name: str(record.name) ?? '',
+    color: normalizeLabelColorOrDefault(record.color),
+  };
+  // Gitee's label object has no description field; a payload that grew one is
+  // still read rather than dropped.
+  const description = str(record.description);
+  if (description !== undefined) {
+    label.description = description;
+  }
+  return label;
+}
+
+/** Normalizes a colour, falling back to the neutral shade on a bad payload. */
+export function normalizeLabelColorOrDefault(raw: unknown): string {
+  try {
+    return normalizeLabelColor(raw);
+  } catch {
+    return '#ededed';
+  }
+}
+
+/**
+ * Renders a colour for Gitee's write endpoint.
+ *
+ * Gitee wants six hex digits without the `#`, same as GitHub.
+ */
+export function labelColorForGitee(color: string): string {
+  return normalizeLabelColor(color).slice(1);
+}
+
+/**
+ * Maps one Gitee release.
+ *
+ * Gitee reports no `published_at`, no `draft` and no release URL, so only
+ * `created_at` is available and is reported as the publication time with that
+ * caveat documented on the model.
+ */
+export function mapRelease(owner: string, repo: string, raw: unknown): Release {
+  const record = asRecord(raw);
+  const tagName = str(record.tag_name) ?? '';
+  const release: Release = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    tag_name: tagName,
+    name: str(record.name) ?? tagName,
+  };
+  const publishedAt = str(record.published_at) ?? str(record.created_at);
+  if (publishedAt !== undefined) {
+    release.published_at = publishedAt;
+  }
+  // No `html_url` on this platform: a derived `/releases/tag/<tag>` link answers
+  // a 302 to a source archive for a non-browser client, so it is not fabricated.
+  const prerelease = bool(record.prerelease);
+  if (prerelease !== undefined) {
+    release.pre_release = prerelease;
+  }
+  return release;
+}
+
+/**
+ * Maps one Gitee stargazer.
+ *
+ * Gitee's stargazer endpoint answers an empty array for every repository,
+ * including large ones, which is why the adapter declares
+ * `repos.listStargazers` unsupported; this mapper exists so the shape is
+ * covered should the platform start answering.
+ */
+export function mapStargazer(owner: string, repo: string, raw: unknown): Stargazer | undefined {
+  const record = asRecord(raw);
+  const user = mapAccount(record.user) ?? mapUser(record);
+  if (user === undefined) {
+    return undefined;
+  }
+  const stargazer: Stargazer = { provider: PROVIDER, owner, repo, user };
+  const starredAt = str(record.starred_at) ?? str(record.created_at);
+  if (starredAt !== undefined) {
+    stargazer.starred_at = starredAt;
+  }
+  return stargazer;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -29,13 +29,25 @@ const PULL_FIXTURE = [
 ];
 
 describe('parameter capability table', () => {
-  it('declares exactly the four documented parameter capabilities', () => {
+  it('declares exactly the five documented parameter capabilities', () => {
     expect([...PARAM_CAPABILITY_IDS]).toEqual([
       'pulls.list.headFilter',
       'pulls.list.milestoneFilter',
       'issues.list.milestoneFilter',
       'files.pushFiles.atomic',
+      'repos.listStargazers.timestamps',
     ]);
+  });
+
+  it('records the stargazer-timestamp matrix as GitHub yes / Gitee no / AtomGit yes', () => {
+    const { client } = buildClient();
+    const matrix = Object.fromEntries(
+      PROVIDERS.map((provider) => [
+        provider,
+        client.paramCapabilities(provider)['repos.listStargazers.timestamps'],
+      ]),
+    );
+    expect(matrix).toEqual({ github: 'supported', gitee: 'unsupported', atomgit: 'supported' });
   });
 
   it('records the head-filter matrix as GitHub yes / Gitee yes / AtomGit no', () => {

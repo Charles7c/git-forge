@@ -24,7 +24,7 @@ import { registerAll } from './tools/index.js';
 export const SERVER_NAME = 'git-forge-mcp';
 
 /** Server version advertised during the MCP handshake. */
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.2.0';
 
 /** Options for {@link buildServer}. */
 export interface BuildServerOptions {

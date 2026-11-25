@@ -7,7 +7,7 @@
  */
 
 /** Semantic version of this build. Kept in sync with `package.json`. */
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 /* The facade: the only way to talk to a platform. */
 export { GitClient } from './client.js';
@@ -29,10 +29,12 @@ export {
   type CreateBranchParams,
   type CreateCommentParams,
   type CreateIssueParams,
+  type CreateLabelParams,
   type CreateOrUpdateFileParams,
   type CreatePullRequestParams,
   type CreateRepositoryParams,
   type DeleteFileParams,
+  type EnsureLabelParams,
   type FileContent,
   type FileWriteResult,
   type GetCommitParams,
@@ -41,14 +43,21 @@ export {
   type GetPullRequestParams,
   type GetRepositoryParams,
   type Issue,
+  type IssueEvent,
+  type IssueEventType,
   type IssueState,
+  type Label,
   type ListBranchesParams,
   type ListCommitsParams,
   type ListCommentsParams,
+  type ListIssueEventsParams,
   type ListIssuesParams,
+  type ListLabelsParams,
   type ListOptions,
   type ListPullRequestsParams,
+  type ListReleasesParams,
   type ListRepositoriesParams,
+  type ListStargazersParams,
   type MergeMethod,
   type MergePullRequestParams,
   type ModelIdentity,
@@ -62,8 +71,11 @@ export {
   type PushFileAction,
   type PushFileEntry,
   type PushFilesParams,
+  type Release,
   type RepoRef,
   type Repository,
+  type RepositoryVisibility,
+  type Stargazer,
   type UpdateIssueParams,
   type UserRef,
 } from './core/types.js';
@@ -155,12 +167,16 @@ export {
   WRITE_CAPABILITIES,
   assertCapabilityTableKeys,
   assertFilePath,
+  assertLabelName,
   assertMaxPages,
   assertNativeId,
   assertNonEmpty,
   assertNonEmptyStringArray,
   assertOneOf,
   assertOptionalFilePath,
+  assertOptionalIsoInstant,
+  instantNanos,
+  tryInstantNanos,
   assertOptionalNonEmpty,
   assertOptionalPositiveInt,
   assertParamsObject,
@@ -170,4 +186,5 @@ export {
   assertRepoRef,
   assertStringArray,
   isWriteCapability,
+  normalizeLabelColor,
 } from './core/validate.js';

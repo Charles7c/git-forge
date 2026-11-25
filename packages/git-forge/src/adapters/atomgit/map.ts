@@ -18,6 +18,9 @@
  */
 import { issueNumberFields } from '../../core/issue-number.js';
 import { unsupportedCapabilityError } from '../../core/errors.js';
+import { normalizeLabelColor } from '../../core/validate.js';
+import { buildCommitAuthor, readGitAuthor } from '../commit-author.js';
+import { deriveVisibility, isPrivateVisibility } from '../visibility.js';
 import type {
   Branch,
   Comment,
@@ -25,12 +28,18 @@ import type {
   CommitAuthor,
   FileContent,
   Issue,
+  IssueEvent,
+  IssueEventType,
   IssueState,
+  Label,
   Provider,
   PullRequest,
   PullRequestRef,
   PullRequestState,
+  Release,
   Repository,
+  RepositoryVisibility,
+  Stargazer,
   UserRef,
 } from '../../core/types.js';
 
@@ -207,6 +216,22 @@ export function mapIssue(owner: string, repo: string, raw: unknown): Issue {
   if (closedAt !== undefined) {
     issue.closed_at = closedAt;
   }
+  const nativeState = str(record.state);
+  if (nativeState !== undefined) {
+    issue.native_state = nativeState;
+  }
+  // `issue_state` is the workflow label (待办的 / …). Measured: issues with
+  // `state: 'closed'` still report 待办的, so it is display text only.
+  const stateLabel = str(record.issue_state) ?? str(asRecord(record.issue_state_detail).title);
+  if (stateLabel !== undefined) {
+    issue.state_label = stateLabel;
+  }
+  // AtomGit states visibility per issue; `public` is the only non-restricted
+  // value, so anything else present is treated as restricted.
+  const visibilityReason = str(record.visibility_reason);
+  if (visibilityReason !== undefined && visibilityReason !== 'public') {
+    issue.restricted = true;
+  }
   return issue;
 }
 
@@ -298,6 +323,11 @@ export function mapPullRequest(
 export function mapRepository(owner: string, repo: string, raw: unknown): Repository {
   const record = asRecord(raw);
   const htmlUrl = str(record.html_url) ?? str(record.web_url) ?? '';
+  const visibility: RepositoryVisibility = deriveVisibility({
+    private: record.private,
+    public: record.public,
+    internal: record.internal,
+  });
   const repository: Repository = {
     provider: PROVIDER,
     // `namespace.path` is the path-safe owner; `human_name` has spaces.
@@ -305,10 +335,15 @@ export function mapRepository(owner: string, repo: string, raw: unknown): Reposi
     repo,
     name: str(record.name) ?? repo,
     html_url: htmlUrl,
-    private: bool(record.private) === true || bool(record.public) === false,
+    private: isPrivateVisibility(visibility),
+    visibility,
     default_branch: str(record.default_branch) ?? '',
   };
 
+  const stargazers = num(record.stargazers_count);
+  if (stargazers !== undefined) {
+    repository.stargazers_count = stargazers;
+  }
   const fullName = str(record.full_name);
   if (fullName !== undefined) {
     repository.full_name = fullName;
@@ -418,6 +453,38 @@ export function mapCommitAuthor(raw: unknown): CommitAuthor | undefined {
   };
 }
 
+/**
+ * Maps the top-level account object, which may carry no `login`.
+ *
+ * AtomGit frequently sends only `{ email, type: 'User' }` for the linked account
+ * — measured on a real repository: 11 of 30 commits had no `commit.author.name`
+ * at all and the top-level object carried no login. An account object without a
+ * login is not a usable {@link UserRef}, so it maps to `undefined` instead of
+ * inventing an identifier.
+ */
+export function mapAccount(raw: unknown): UserRef | undefined {
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  const record = asRecord(raw);
+  // A missing `login` is normal here, and a display name is not a substitute for
+  // one — only `login` names an account.
+  const login = str(record.login);
+  if (login === undefined) {
+    return undefined;
+  }
+  const user: UserRef = { login };
+  const name = str(record.name);
+  const avatar = str(record.avatar_url);
+  if (name !== undefined) {
+    user.name = name;
+  }
+  if (avatar !== undefined) {
+    user.avatar_url = avatar;
+  }
+  return user;
+}
+
 /** Maps one AtomGit commit. */
 export function mapCommit(owner: string, repo: string, raw: unknown): Commit {
   const record = asRecord(raw);
@@ -432,7 +499,13 @@ export function mapCommit(owner: string, repo: string, raw: unknown): Commit {
     html_url: str(record.html_url) ?? '',
   };
 
-  const author = mapCommitAuthor(payload.author);
+  // The author side is the contribution account; the committer may be a bot.
+  // The block survives a Git payload without a name, because the account alone
+  // is enough to identify the contributor.
+  const author = buildCommitAuthor(
+    readGitAuthor(asRecord(payload.author)),
+    mapAccount(record.author),
+  );
   if (author !== undefined) {
     commit.author = author;
   }
@@ -524,6 +597,178 @@ export function describeValue(value: unknown): string {
     return value.length === 0 ? 'an empty string' : `"${value}"`;
   }
   return typeof value;
+}
+
+/**
+ * Parses label names out of an AtomGit operation-log sentence.
+ *
+ * AtomGit ships no structured label field: the only record of a mutation is an
+ * English sentence, `add label feature, planned, roadmap` or
+ * `remove label bug`. The names are taken verbatim (a label may contain spaces,
+ * so splitting on whitespace would be wrong) and an unrecognised sentence yields
+ * an empty list — the event is still reported, just without a name.
+ */
+export function parseLabelNames(content: string | undefined): string[] {
+  if (content === undefined) {
+    return [];
+  }
+  const match = /^(?:add|remove)\s+labels?\s+(.+)$/i.exec(content.trim());
+  if (match === null) {
+    return [];
+  }
+  const names = (match[1] as string)
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  return names;
+}
+
+/**
+ * Reads the direction out of an AtomGit label sentence.
+ *
+ * `add label …` and `remove label …` are the two observed forms. Anything else
+ * is `unknown` rather than an assumed addition: reporting a removal as `labeled`
+ * inverts the resulting state and makes the whole timeline untrustworthy.
+ */
+export function parseLabelDirection(content: string): IssueEventType {
+  const trimmed = content.trim();
+  if (/^add\s+labels?\s+/i.test(trimmed)) {
+    return 'labeled';
+  }
+  if (/^remove\s+labels?\s+/i.test(trimmed)) {
+    return 'unlabeled';
+  }
+  return 'unknown';
+}
+
+/**
+ * Maps one AtomGit operation-log entry to zero or more label events.
+ *
+ * One log entry can carry several labels (`add label feature, planned,
+ * roadmap`), so the result is a list: the caller gets one event per label rather
+ * than a comma-joined string it would have to split itself. An unrecognised
+ * action, or a sentence whose direction cannot be read, still produces an event
+ * — with `type: 'unknown'` and no `label` — rather than disappearing or being
+ * recorded as an addition.
+ */
+export function mapIssueEvents(owner: string, repo: string, raw: unknown): IssueEvent[] {
+  const record = asRecord(raw);
+  const action = str(record.action_type);
+  if (action !== 'label') {
+    return [];
+  }
+  const created = str(record.created_at);
+  if (created === undefined) {
+    return [];
+  }
+  const content = str(record.content) ?? '';
+  const type = parseLabelDirection(content);
+  const base: IssueEvent = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    type,
+    created_at: created,
+  };
+  const actor = mapAccount(record.user);
+  if (actor !== undefined) {
+    base.actor = actor;
+  }
+  const labels = parseLabelNames(content);
+  if (labels.length === 0) {
+    // The mutation happened but the names are unreadable; report the event
+    // without inventing a label.
+    return [base];
+  }
+  return labels.map((label) => ({ ...base, label }));
+}
+
+/** Maps one AtomGit label, normalizing its colour to `#rrggbb`. */
+export function mapLabel(owner: string, repo: string, raw: unknown): Label {
+  const record = asRecord(raw);
+  const label: Label = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    name: str(record.name) ?? '',
+    color: normalizeLabelColorOrDefault(record.color),
+  };
+  const description = str(record.description);
+  if (description !== undefined) {
+    label.description = description;
+  }
+  return label;
+}
+
+/** Normalizes a colour, falling back to the neutral shade on a bad payload. */
+export function normalizeLabelColorOrDefault(raw: unknown): string {
+  try {
+    return normalizeLabelColor(raw);
+  } catch {
+    return '#ededed';
+  }
+}
+
+/**
+ * Renders a colour for AtomGit's write endpoint.
+ *
+ * AtomGit is the one platform that keeps the `#` prefix on the wire.
+ */
+export function labelColorForAtomGit(color: string): string {
+  return normalizeLabelColor(color);
+}
+
+/**
+ * Maps one AtomGit release.
+ *
+ * No `published_at`, no `draft`, no release URL: `created_at` is the only
+ * timestamp and `release_status` is a separate `pre` / `latest` marker.
+ */
+export function mapRelease(owner: string, repo: string, raw: unknown): Release {
+  const record = asRecord(raw);
+  const tagName = str(record.tag_name) ?? '';
+  const release: Release = {
+    provider: PROVIDER,
+    owner,
+    repo,
+    tag_name: tagName,
+    name: str(record.name) ?? tagName,
+  };
+  const publishedAt = str(record.published_at) ?? str(record.created_at);
+  if (publishedAt !== undefined) {
+    release.published_at = publishedAt;
+  }
+  const prerelease = bool(record.prerelease);
+  if (prerelease !== undefined) {
+    release.pre_release = prerelease;
+  } else {
+    // `release_status` is this platform's own vocabulary and names both
+    // directions: `pre` is a pre-release, `latest` (spelled `lasted` in one
+    // schema) is a stable release. Only an unrecognised value stays unknown,
+    // rather than defaulting to "stable".
+    const status = str(record.release_status)?.toLowerCase();
+    if (status === 'pre') {
+      release.pre_release = true;
+    } else if (status === 'latest' || status === 'lasted') {
+      release.pre_release = false;
+    }
+  }
+  return release;
+}
+
+/** Maps one AtomGit stargazer; this is the only platform with a timestamps list. */
+export function mapStargazer(owner: string, repo: string, raw: unknown): Stargazer | undefined {
+  const record = asRecord(raw);
+  const user = mapAccount(record.user) ?? mapUser(record);
+  if (user === undefined) {
+    return undefined;
+  }
+  const stargazer: Stargazer = { provider: PROVIDER, owner, repo, user };
+  const starredAt = str(record.starred_at);
+  if (starredAt !== undefined) {
+    stargazer.starred_at = starredAt;
+  }
+  return stargazer;
 }
 
 /**

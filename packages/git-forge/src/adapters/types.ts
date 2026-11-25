@@ -21,6 +21,7 @@ import type {
   CreateBranchParams,
   CreateCommentParams,
   CreateIssueParams,
+  CreateLabelParams,
   CreateOrUpdateFileParams,
   CreatePullRequestParams,
   CreateRepositoryParams,
@@ -33,19 +34,27 @@ import type {
   GetPullRequestParams,
   GetRepositoryParams,
   Issue,
+  IssueEvent,
+  Label,
   ListBranchesParams,
   ListCommitsParams,
   ListCommentsParams,
+  ListIssueEventsParams,
   ListIssuesParams,
+  ListLabelsParams,
   ListPullRequestsParams,
+  ListReleasesParams,
   ListRepositoriesParams,
+  ListStargazersParams,
   MergePullRequestParams,
   ParamCapabilityId,
   ParamCapabilityTable,
   Provider,
   PullRequest,
   PushFilesParams,
+  Release,
   Repository,
+  Stargazer,
   UpdateIssueParams,
 } from '../core/types.js';
 
@@ -94,7 +103,7 @@ export type { PushFileAction } from '../core/types.js';
  */
 export type PushFilesInput = PushFilesParams;
 
-/** Issue domain: list / get / create / update and their comments. */
+/** Issue domain: list / get / create / update, their comments and label events. */
 export interface IssueDomain {
   listIssues(ctx: AdapterCtx, params: WithProvider<ListIssuesParams>): Promise<Issue[]>;
   getIssue(ctx: AdapterCtx, params: WithProvider<GetIssueParams>): Promise<Issue>;
@@ -102,6 +111,17 @@ export interface IssueDomain {
   updateIssue(ctx: AdapterCtx, params: WithProvider<UpdateIssueParams>): Promise<Issue>;
   listIssueComments(ctx: AdapterCtx, params: WithProvider<ListCommentsParams>): Promise<Comment[]>;
   createIssueComment(ctx: AdapterCtx, params: WithProvider<CreateCommentParams>): Promise<Comment>;
+  /**
+   * Lists an issue's label events.
+   *
+   * Returns label mutations only, oldest first where the platform can order
+   * them. Every adapter answers the same shape; a platform that reports several
+   * labels per log entry expands them into one event each.
+   */
+  listIssueEvents(
+    ctx: AdapterCtx,
+    params: WithProvider<ListIssueEventsParams>,
+  ): Promise<IssueEvent[]>;
 }
 
 /** Pull-request domain: list / get / create / merge and their comments. */
@@ -129,7 +149,7 @@ export interface PullRequestDomain {
   ): Promise<Comment>;
 }
 
-/** Repository domain: list / get / create / read file contents. */
+/** Repository domain: list / get / create, read file contents, read stargazers. */
 export interface RepositoryDomain {
   listRepositories(
     ctx: AdapterCtx,
@@ -144,6 +164,14 @@ export interface RepositoryDomain {
     ctx: AdapterCtx,
     params: WithProvider<GetFileContentsParams>,
   ): Promise<FileContent>;
+  /**
+   * Lists stargazers, newest first where the platform orders them.
+   *
+   * Gitee's endpoint answers an empty array for every repository, so this
+   * adapter declares the capability unsupported rather than returning a
+   * misleading empty list.
+   */
+  listStargazers(ctx: AdapterCtx, params: WithProvider<ListStargazersParams>): Promise<Stargazer[]>;
 }
 
 /** Files domain: single-file create/update/delete plus batch push. */
@@ -175,9 +203,33 @@ export interface BranchCommitDomain {
   getCommit(ctx: AdapterCtx, params: WithProvider<GetCommitParams>): Promise<Commit>;
 }
 
+/**
+ * Release domain: list releases.
+ *
+ * All three platforms expose a read endpoint; what differs is which fields come
+ * back, and that difference is documented on {@link Release} rather than
+ * papered over with fabricated values.
+ */
+export interface ReleaseDomain {
+  listReleases(ctx: AdapterCtx, params: WithProvider<ListReleasesParams>): Promise<Release[]>;
+}
+
+/** Label domain: list and create repository labels. */
+export interface LabelDomain {
+  listLabels(ctx: AdapterCtx, params: WithProvider<ListLabelsParams>): Promise<Label[]>;
+  createLabel(ctx: AdapterCtx, params: WithProvider<CreateLabelParams>): Promise<Label>;
+}
+
 /** Everything a provider must implement. */
 export interface ProviderAdapter
-  extends IssueDomain, PullRequestDomain, RepositoryDomain, FilesDomain, BranchCommitDomain {
+  extends
+    IssueDomain,
+    PullRequestDomain,
+    RepositoryDomain,
+    FilesDomain,
+    BranchCommitDomain,
+    ReleaseDomain,
+    LabelDomain {
   readonly provider: Provider;
   readonly capabilities: CapabilityTable;
   readonly paramCapabilities: ParamCapabilityTable;

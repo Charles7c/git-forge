@@ -44,14 +44,24 @@ function stateOf(call: MockCall): string | null {
 }
 
 describe('gitee adapter capability table', () => {
-  it('declares all 24 method-level capabilities and supports them', () => {
+  it('declares all 29 method-level capabilities with stargazer listing as the only gap', () => {
     expectCompleteCapabilityTable(giteeAdapter);
-    for (const id of CAPABILITY_IDS) {
-      expect(capabilityState(giteeAdapter, id)).toBe('supported');
-    }
+    expect(Object.keys(giteeAdapter.capabilities)).toHaveLength(CAPABILITY_IDS.length);
+
+    // The endpoint is routable but answers an empty array for every
+    // repository, so an empty list would be a wrong answer rather than a
+    // missing feature.
+    const unsupported = CAPABILITY_IDS.filter(
+      (id) => capabilityState(giteeAdapter, id) === 'unsupported',
+    );
+    expect(unsupported).toEqual(['repos.listStargazers']);
+
     // The batch endpoint accepts all actions in one commit.
     expect(capabilityState(giteeAdapter, 'files.pushFiles')).toBe('supported');
     expect(paramCapabilityState(giteeAdapter, 'files.pushFiles.atomic')).toBe('supported');
+    expect(paramCapabilityState(giteeAdapter, 'repos.listStargazers.timestamps')).toBe(
+      'unsupported',
+    );
   });
 });
 

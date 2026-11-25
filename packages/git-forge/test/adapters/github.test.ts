@@ -39,9 +39,9 @@ async function expectGitForgeError(promise: Promise<unknown>): Promise<GitForgeE
 }
 
 describe('github adapter capability table', () => {
-  it('declares all 24 method-level capabilities', () => {
+  it('declares all 29 method-level capabilities', () => {
     expectCompleteCapabilityTable(githubAdapter);
-    expect(Object.keys(githubAdapter.capabilities)).toHaveLength(24);
+    expect(Object.keys(githubAdapter.capabilities)).toHaveLength(29);
     expect(Object.keys(githubAdapter.capabilities)).toHaveLength(CAPABILITY_IDS.length);
   });
 
@@ -53,10 +53,13 @@ describe('github adapter capability table', () => {
     expect(paramCapabilityState(githubAdapter, 'files.pushFiles.atomic')).toBe('supported');
   });
 
-  it('supports the head and milestone filters', () => {
+  it('supports the head and milestone filters and the star timestamps', () => {
     expect(paramCapabilityState(githubAdapter, 'pulls.list.headFilter')).toBe('supported');
     expect(paramCapabilityState(githubAdapter, 'pulls.list.milestoneFilter')).toBe('supported');
     expect(paramCapabilityState(githubAdapter, 'issues.list.milestoneFilter')).toBe('supported');
+    expect(paramCapabilityState(githubAdapter, 'repos.listStargazers.timestamps')).toBe(
+      'supported',
+    );
   });
 });
 

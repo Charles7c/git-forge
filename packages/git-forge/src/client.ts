@@ -36,13 +36,17 @@ import {
 import { bulk as runBulk } from './core/bulk.js';
 import type { BulkItemResult, BulkOptions } from './core/bulk.js';
 import { HttpClient, DEFAULT_TIMEOUT_MS, DEFAULT_USER_AGENT } from './core/http.js';
+import { MAX_PAGES_LIMIT } from './core/paginate.js';
+import { isGitForgeError } from './core/errors.js';
 import type { RetryPolicy } from './core/retry.js';
 import {
   assertFilePath,
+  assertLabelName,
   assertMaxPages,
   assertNativeId,
   assertNonEmpty,
   assertOptionalBoolean,
+  assertOptionalIsoInstant,
   assertOptionalNonEmpty,
   assertOptionalOneOf,
   assertOptionalPathSegment,
@@ -53,7 +57,9 @@ import {
   assertPushFilesParams,
   assertRepoRef,
   assertStringArray,
+  instantNanos,
   isWriteCapability,
+  normalizeLabelColor,
 } from './core/validate.js';
 import type {
   Branch,
@@ -63,10 +69,12 @@ import type {
   CreateBranchParams,
   CreateCommentParams,
   CreateIssueParams,
+  CreateLabelParams,
   CreateOrUpdateFileParams,
   CreatePullRequestParams,
   CreateRepositoryParams,
   DeleteFileParams,
+  EnsureLabelParams,
   FileContent,
   FileWriteResult,
   GetCommitParams,
@@ -75,18 +83,26 @@ import type {
   GetPullRequestParams,
   GetRepositoryParams,
   Issue,
+  IssueEvent,
+  Label,
   ListBranchesParams,
   ListCommitsParams,
   ListCommentsParams,
+  ListIssueEventsParams,
   ListIssuesParams,
+  ListLabelsParams,
   ListPullRequestsParams,
+  ListReleasesParams,
   ListRepositoriesParams,
+  ListStargazersParams,
   MergePullRequestParams,
   ParamCapabilityId,
   Provider,
   PullRequest,
   PushFilesParams,
+  Release,
   Repository,
+  Stargazer,
   UpdateIssueParams,
 } from './core/types.js';
 import type { AdapterCtx, ProviderAdapter } from './adapters/types.js';
@@ -348,12 +364,57 @@ function validateCreateBranch(params: CreateBranchParams): void {
 function validateListCommits(params: ListCommitsParams): void {
   assertRepoRef(params);
   assertOptionalNonEmpty('branch', params.branch);
+  assertOptionalIsoInstant('since', params.since);
+  assertOptionalIsoInstant('until', params.until);
+  if (params.since !== undefined && params.until !== undefined) {
+    // An inverted window returns nothing on every platform, which reads like an
+    // empty repository; refusing it names the actual mistake. The comparison is
+    // at the full nine fractional digits ISO 8601 allows, because truncating to
+    // milliseconds would call a nanosecond-level inversion equal and let it
+    // through.
+    if (instantNanos(params.since) > instantNanos(params.until)) {
+      throw invalidArgumentError('Invalid `since`/`until`: `since` must not be later than `until`');
+    }
+  }
   assertMaxPages(params.maxPages);
 }
 
 function validateGetCommit(params: GetCommitParams): void {
   assertRepoRef(params);
   assertNonEmpty('sha', params.sha);
+}
+
+function validateListIssueEvents(params: ListIssueEventsParams): void {
+  assertRepoRef(params);
+  assertNativeId('number', params.number);
+  assertMaxPages(params.maxPages);
+}
+
+function validateListStargazers(params: ListStargazersParams): void {
+  assertRepoRef(params);
+  assertOptionalBoolean('timestamps', params.timestamps);
+  assertMaxPages(params.maxPages);
+}
+
+function validateCreateLabel(params: CreateLabelParams): void {
+  assertRepoRef(params);
+  assertLabelName('name', params.name);
+  // Normalizing here turns a bad colour into a local error instead of a 422
+  // whose message differs per platform.
+  normalizeLabelColor(params.color);
+  assertOptionalString('description', params.description);
+}
+
+function validateEnsureLabel(params: EnsureLabelParams): void {
+  assertRepoRef(params);
+  assertLabelName('name', params.name);
+  // `color` is only needed when the label turns out to be missing, so a pure
+  // existence check does not have to invent one. A colour that *is* supplied is
+  // still validated here, before any request.
+  if (params.color !== undefined) {
+    normalizeLabelColor(params.color);
+  }
+  assertOptionalString('description', params.description);
 }
 
 /**
@@ -448,6 +509,22 @@ export class GitClient {
       params,
       validateCreateComment,
       (p, ctx) => ctx.adapter.createIssueComment(ctx.ctx, p),
+    );
+  }
+
+  /**
+   * Lists an issue's label events.
+   *
+   * Read-only: no write capability is involved, so the gate order is validation
+   * then token then capability.
+   */
+  listIssueEvents(params: ProviderParams<ListIssueEventsParams>): Promise<IssueEvent[]> {
+    return this.dispatch(
+      'listIssueEvents',
+      'issues.listEvents',
+      params,
+      validateListIssueEvents,
+      (p, ctx) => ctx.adapter.listIssueEvents(ctx.ctx, p),
     );
   }
 
@@ -572,6 +649,148 @@ export class GitClient {
       validateGetFileContents,
       (p, ctx) => ctx.adapter.getFileContents(ctx.ctx, p),
     );
+  }
+
+  /**
+   * Lists stargazers.
+   *
+   * `timestamps` goes through the parameter capability gate: Gitee cannot answer
+   * the listing at all, and a platform that listed users without a time would
+   * otherwise return rows silently missing the field the caller asked for.
+   */
+  listStargazers(params: ProviderParams<ListStargazersParams>): Promise<Stargazer[]> {
+    return this.dispatch(
+      'listStargazers',
+      'repos.listStargazers',
+      params,
+      validateListStargazers,
+      (p, ctx) => ctx.adapter.listStargazers(ctx.ctx, p),
+      (p, ctx) => {
+        if (p.timestamps === true) {
+          this.assertParamCapability(ctx, 'repos.listStargazers.timestamps');
+        }
+      },
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Release                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  /** Lists releases, newest first where the platform orders them. */
+  listReleases(params: ProviderParams<ListReleasesParams>): Promise<Release[]> {
+    return this.dispatch(
+      'listReleases',
+      'releases.list',
+      params,
+      (p) => {
+        assertRepoRef(p);
+        assertMaxPages(p.maxPages);
+      },
+      (p, ctx) => ctx.adapter.listReleases(ctx.ctx, p),
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Label                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  /** Lists repository labels. `requireComplete` rejects a budget-truncated list. */
+  listLabels(params: ProviderParams<ListLabelsParams>): Promise<Label[]> {
+    return this.dispatch(
+      'listLabels',
+      'labels.list',
+      params,
+      (p) => {
+        assertRepoRef(p);
+        assertOptionalBoolean('requireComplete', p.requireComplete);
+        assertMaxPages(p.maxPages);
+      },
+      (p, ctx) => ctx.adapter.listLabels(ctx.ctx, p),
+    );
+  }
+
+  /** Creates a repository label. */
+  createLabel(params: ProviderParams<CreateLabelParams>): Promise<Label> {
+    return this.dispatch('createLabel', 'labels.create', params, validateCreateLabel, (p, ctx) =>
+      ctx.adapter.createLabel(ctx.ctx, p),
+    );
+  }
+
+  /**
+   * Returns the named label, creating it only when provably absent.
+   *
+   * Built on the public `listLabels` / `createLabel` calls rather than inside an
+   * adapter, so the same capability gates and the same `READONLY_BLOCKED` check
+   * apply. Three things keep it from writing on a bad premise:
+   *
+   * - the listing is read with `requireComplete`, so a budget-truncated page set
+   *   raises `PAGINATION_LIMIT` instead of looking like "the name is absent";
+   * - the name comparison is case-insensitive, because the platforms vary here
+   *   and a near-match would otherwise be duplicated;
+   * - `color` is demanded only once a create is actually required.
+   *
+   * It is still not a conditional create: two concurrent callers can race, and
+   * the loser re-reads once before the upstream error is reported.
+   */
+  async ensureLabel(params: ProviderParams<EnsureLabelParams>): Promise<Label> {
+    assertParamsObject(params, 'ensureLabel');
+    assertProvider(params.provider);
+    try {
+      validateEnsureLabel(params);
+    } catch (error) {
+      throw withProvider(error, params.provider);
+    }
+
+    // The whole call is a write intent, so the read-only gate must fire before
+    // the read — otherwise a read-only client would issue one HTTP request and
+    // only then refuse, breaking the zero-HTTP guarantee.
+    if (this.readonly) {
+      throw readonlyBlockedError(params.provider, 'labels.create', 'ensureLabel');
+    }
+
+    const { provider, owner, repo, name } = params;
+    const wanted = name.toLowerCase();
+
+    // `requireComplete` is essential here: a truncated list is indistinguishable
+    // from a complete one that lacks the name, and acting on that reading would
+    // create a duplicate or mask the truncation.
+    const existing = await this.listLabels({
+      provider,
+      owner,
+      repo,
+      maxPages: MAX_PAGES_LIMIT,
+      requireComplete: true,
+    });
+    const match = existing.find((label) => label.name.toLowerCase() === wanted);
+    if (match !== undefined) {
+      return match;
+    }
+
+    if (params.color === undefined) {
+      throw invalidArgumentError(
+        'Invalid `color`: ensureLabel requires a color when the label has to be created. ' +
+          'Omit it only when the label is expected to exist already.',
+        params.provider,
+        'labels.create',
+      );
+    }
+
+    try {
+      return await this.createLabel({ ...params, color: params.color });
+    } catch (error) {
+      // A concurrent caller may have created it between the read and the write.
+      // The platforms answer differently here (409, 422, a silent success), so
+      // the label is re-read once before the error is reported.
+      if (isGitForgeError(error)) {
+        const after = await this.listLabels({ provider, owner, repo, maxPages: MAX_PAGES_LIMIT });
+        const raced = after.find((label) => label.name.toLowerCase() === wanted);
+        if (raced !== undefined) {
+          return raced;
+        }
+      }
+      throw error;
+    }
   }
 
   /* ---------------------------------------------------------------------- */

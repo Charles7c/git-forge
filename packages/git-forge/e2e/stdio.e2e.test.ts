@@ -88,8 +88,8 @@ it.each(['GITKIT_READONLY', 'GIT_FORGE_READONLY'])(
           });
           send({ method: 'notifications/initialized' });
           const names = (await call('tools/list', {})).tools?.map(({ name }) => name);
-          expect(names).toHaveLength(23);
-          expect(new Set(names).size).toBe(23);
+          expect(names).toHaveLength(29);
+          expect(new Set(names).size).toBe(29);
           expect(names?.every((name) => name.startsWith('git_'))).toBe(true);
           const write = await tool('git_create_repository', { provider: 'github', name: repo });
           expect(write.isError).toBe(true);

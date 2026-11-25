@@ -34,7 +34,7 @@ export interface AuthConfig {
    * `bearer` sets `Authorization: Bearer <token>`; `query` appends
    * `access_token=<token>`.
    *
-   * v0.1.0 defaults to `bearer` on all three platforms. `query` exists only for
+   * The SDK defaults to `bearer` on all three platforms. `query` exists only for
    * compatibility with older Gitee/AtomGit integrations and forces redaction of
    * every URL that leaves this layer.
    */
@@ -116,7 +116,7 @@ export interface HttpClientOptions {
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 /** Default `User-Agent` sent when the caller supplies none. */
-export const DEFAULT_USER_AGENT = 'git-forge/0.1.0';
+export const DEFAULT_USER_AGENT = 'git-forge/0.2.0';
 
 /**
  * The request layer.

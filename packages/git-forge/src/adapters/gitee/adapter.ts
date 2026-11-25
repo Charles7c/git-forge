@@ -16,18 +16,22 @@
  *   be decided from the status code.
  */
 import { selectIssueRows } from '../issues.js';
+import { labelKeyOf, selectLabelRows } from '../labels.js';
+import { sortEventsOldestFirst } from '../events.js';
 import { collectPullRequests, pullFromResponse } from '../pulls.js';
 import type { HttpResponse } from '../../core/http.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
-import { invalidArgumentError } from '../../core/errors.js';
+import { invalidArgumentError, unsupportedCapabilityError } from '../../core/errors.js';
 import { collectPages, dedupeBy } from '../../core/paginate.js';
 import type {
   AdapterCtx,
   BranchCommitDomain,
   FilesDomain,
   IssueDomain,
+  LabelDomain,
   ProviderAdapter,
   PullRequestDomain,
+  ReleaseDomain,
   RepositoryDomain,
   PushFilesInput,
   WithProvider,
@@ -39,18 +43,23 @@ import {
   deriveBranchHtmlUrl,
   deriveParentHtmlUrl,
   joinLabels,
+  labelColorForGitee,
   listKey,
   mapBranch,
   mapComment,
   mapCommit,
   mapFileContent,
   mapIssue,
+  mapIssueEvents,
+  mapLabel,
   mapPullRequest,
+  mapRelease,
   mapRepository,
   readPushEntries,
   str,
   toGiteeEncoding,
 } from './map.js';
+import { sortReleasesNewestFirst } from '../releases.js';
 import { capabilities, paramCapabilities } from './capabilities.js';
 import type {
   Branch,
@@ -59,6 +68,7 @@ import type {
   CreateBranchParams,
   CreateCommentParams,
   CreateIssueParams,
+  CreateLabelParams,
   CreateOrUpdateFileParams,
   CreatePullRequestParams,
   CreateRepositoryParams,
@@ -71,14 +81,20 @@ import type {
   GetPullRequestParams,
   GetRepositoryParams,
   Issue,
+  IssueEvent,
+  Label,
   ListBranchesParams,
   ListCommitsParams,
   ListCommentsParams,
+  ListIssueEventsParams,
   ListIssuesParams,
+  ListLabelsParams,
   ListPullRequestsParams,
+  ListReleasesParams,
   ListRepositoriesParams,
   MergePullRequestParams,
   PullRequest,
+  Release,
   Repository,
   UpdateIssueParams,
 } from '../../core/types.js';
@@ -136,7 +152,14 @@ function assertIssueMilestoneFilter(milestone: number | undefined): void {
 
 /** Domain implementation backed by gitee.com/api/v5. */
 class GiteeAdapter
-  implements IssueDomain, PullRequestDomain, RepositoryDomain, FilesDomain, BranchCommitDomain
+  implements
+    IssueDomain,
+    PullRequestDomain,
+    RepositoryDomain,
+    FilesDomain,
+    BranchCommitDomain,
+    ReleaseDomain,
+    LabelDomain
 {
   readonly provider = 'gitee' as const;
   readonly capabilities = capabilities;
@@ -242,6 +265,41 @@ class GiteeAdapter
       params.number,
     );
     return this.createComment(ctx, params, `${REPO_PATH}/issues/{number}/comments`, parentUrl);
+  }
+
+  /**
+   * Reads the label operation log.
+   *
+   * Two Gitee facts shape this call:
+   *
+   * - the path is owner-scoped (`/repos/{owner}/issues/{number}/operate_logs`)
+   *   with the repository passed as a query parameter, like the issue writes;
+   * - the endpoint accepts no `page` / `per_page`, so it is one request and
+   *   `maxPages` does not apply. Issuing a page parameter would be ignored and
+   *   the caller would think a partial list was complete.
+   */
+  async listIssueEvents(
+    ctx: AdapterCtx,
+    params: WithProvider<ListIssueEventsParams>,
+  ): Promise<IssueEvent[]> {
+    const response = await ctx.http.request<unknown>({
+      method: 'GET',
+      path: '/repos/{owner}/issues/{number}/operate_logs',
+      pathParams: { owner: params.owner, number: String(params.number) },
+      query: { repo: params.repo, sort: 'desc' },
+    });
+    if (!Array.isArray(response.json)) {
+      throw ctx.http.invalidResponse(
+        response,
+        'The Gitee operation-log response must be an array.',
+      );
+    }
+    // The log is requested `sort: 'desc'` for a stable window, but the order the
+    // endpoint returns is not a contract and the caller replays this as a
+    // timeline, so the retrieved entries are sorted oldest-first.
+    return sortEventsOldestFirst(
+      response.json.flatMap((entry) => mapIssueEvents(params.owner, params.repo, entry)),
+    );
   }
 
   /* ---------------------------------------------------------------------- */
@@ -433,16 +491,29 @@ class GiteeAdapter
     });
 
     // Gitee answers `200 + []` for a missing path (never 404) and an array for a
-    // directory, so the payload shape — not the status — decides. v0.1.0 has no
+    // directory, so the payload shape — not the status — decides. this SDK has no
     // directory listing, so both cases are a caller error.
     if (Array.isArray(response.json)) {
       throw invalidArgumentError(
         `Invalid \`path\`: "${params.path}" is a directory or does not exist (Gitee answers 200 with an array). ` +
-          'v0.1.0 getFileContents reads a single file only.',
+          'this SDK reads a single file only.',
         'gitee',
       );
     }
     return mapFileContent(params.owner, params.repo, response.json);
+  }
+
+  /**
+   * Always throws: Gitee has no usable stargazer listing.
+   *
+   * The endpoint exists in the routing table but answers `[]` for every
+   * repository measured, including large ones, so returning that empty list
+   * would tell a caller "nobody starred this" — a wrong answer rather than a
+   * missing feature. The capability table marks the gap and this stand-in makes
+   * a direct adapter call fail the same way the facade would.
+   */
+  listStargazers(): Promise<never> {
+    return Promise.reject(unsupportedCapabilityError('gitee', 'repos.listStargazers'));
   }
 
   /* ---------------------------------------------------------------------- */
@@ -524,6 +595,81 @@ class GiteeAdapter
   }
 
   /* ---------------------------------------------------------------------- */
+  /* Release                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Lists releases, newest first.
+   *
+   * Gitee defaults to ascending order, so `direction=desc` is always sent: a
+   * caller wanting "the latest three" must not have to reverse the list itself.
+   */
+  async listReleases(
+    ctx: AdapterCtx,
+    params: WithProvider<ListReleasesParams>,
+  ): Promise<Release[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/releases`,
+        pathParams: repoParams(params.owner, params.repo),
+        query: { direction: 'desc' },
+      },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: (raw) => listKey(asRecord(raw).id ?? asRecord(raw).tag_name),
+      },
+    );
+    return sortReleasesNewestFirst(
+      entries.map((entry) => mapRelease(params.owner, params.repo, entry)),
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Label                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  async listLabels(ctx: AdapterCtx, params: WithProvider<ListLabelsParams>): Promise<Label[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/labels`,
+        pathParams: repoParams(params.owner, params.repo),
+      },
+      {
+        maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
+        selectItems: (raw, { response }) =>
+          selectLabelRows(ctx.http, response, params.requireComplete),
+        keyOf: labelKeyOf(),
+      },
+    );
+    return entries.map((entry) => mapLabel(params.owner, params.repo, entry));
+  }
+
+  /**
+   * Creates a label.
+   *
+   * Gitee takes a form body with `name` and `color` both required, and the
+   * colour must be six hex digits without `#`. Gitee's label model has no
+   * description field, so a description is accepted and not sent rather than
+   * being silently reinterpreted.
+   */
+  async createLabel(ctx: AdapterCtx, params: WithProvider<CreateLabelParams>): Promise<Label> {
+    const response = await ctx.http.request<unknown>({
+      method: 'POST',
+      path: `${REPO_PATH}/labels`,
+      pathParams: repoParams(params.owner, params.repo),
+      paramsIn: 'form',
+      body: { name: params.name, color: labelColorForGitee(params.color) },
+    });
+    return mapLabel(params.owner, params.repo, response.json);
+  }
+
+  /* ---------------------------------------------------------------------- */
   /* Branch / Commit                                                        */
   /* ---------------------------------------------------------------------- */
 
@@ -582,7 +728,7 @@ class GiteeAdapter
       },
       {
         maxPages: params.maxPages,
-        query: { sha: params.branch },
+        query: { sha: params.branch, since: params.since, until: params.until },
         selectItems: (raw) => asArray(raw),
         keyOf: (raw) => listKey(asRecord(raw).sha),
       },

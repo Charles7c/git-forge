@@ -41,24 +41,26 @@ function capture(fn: () => void): GitForgeError {
 }
 
 describe('CAPABILITY_IDS', () => {
-  it('has exactly 24 entries', () => {
-    expect(CAPABILITY_IDS).toHaveLength(24);
+  it('has exactly 29 entries', () => {
+    expect(CAPABILITY_IDS).toHaveLength(29);
   });
 
   it('contains no duplicates', () => {
-    expect(new Set(CAPABILITY_IDS).size).toBe(24);
+    expect(new Set(CAPABILITY_IDS).size).toBe(29);
   });
 
-  it('is grouped as Issue 6 / PR 6 / Repo 4 / Files 4 / Branch 2 / Commit 2', () => {
+  it('is grouped as Issue 7 / PR 6 / Repo 5 / Files 4 / Branch 2 / Commit 2 / Release 1 / Label 2', () => {
     const count = (prefix: string): number =>
       CAPABILITY_IDS.filter((id) => id.startsWith(prefix)).length;
-    expect(count('issues.')).toBe(6);
+    expect(count('issues.')).toBe(7);
     expect(count('pulls.')).toBe(6);
-    expect(count('repos.')).toBe(4);
+    expect(count('repos.')).toBe(5);
     expect(count('files.')).toBe(4);
     expect(count('branches.')).toBe(2);
     expect(count('commits.')).toBe(2);
-    expect(6 + 6 + 4 + 4 + 2 + 2).toBe(24);
+    expect(count('releases.')).toBe(1);
+    expect(count('labels.')).toBe(2);
+    expect(7 + 6 + 5 + 4 + 2 + 2 + 1 + 2).toBe(29);
   });
 
   it('lists the exact expected identifiers', () => {
@@ -70,6 +72,7 @@ describe('CAPABILITY_IDS', () => {
         'issues.update',
         'issues.listComments',
         'issues.createComment',
+        'issues.listEvents',
         'pulls.list',
         'pulls.get',
         'pulls.create',
@@ -80,6 +83,7 @@ describe('CAPABILITY_IDS', () => {
         'repos.get',
         'repos.create',
         'repos.getFileContents',
+        'repos.listStargazers',
         'files.create',
         'files.update',
         'files.delete',
@@ -88,6 +92,9 @@ describe('CAPABILITY_IDS', () => {
         'branches.create',
         'commits.list',
         'commits.get',
+        'releases.list',
+        'labels.list',
+        'labels.create',
       ].sort(),
     );
   });
@@ -100,8 +107,8 @@ describe('CAPABILITY_IDS', () => {
 });
 
 describe('WRITE_CAPABILITIES', () => {
-  it('holds exactly 12 capabilities', () => {
-    expect(WRITE_CAPABILITIES.size).toBe(12);
+  it('holds exactly 13 capabilities', () => {
+    expect(WRITE_CAPABILITIES.size).toBe(13);
   });
 
   it('lists the exact write operations', () => {
@@ -119,6 +126,7 @@ describe('WRITE_CAPABILITIES', () => {
         'files.delete',
         'files.pushFiles',
         'branches.create',
+        'labels.create',
       ].sort(),
     );
   });
@@ -131,7 +139,7 @@ describe('WRITE_CAPABILITIES', () => {
 
   it('excludes every read capability', () => {
     const reads = CAPABILITY_IDS.filter((id) => !WRITE_CAPABILITIES.has(id));
-    expect(reads).toHaveLength(12);
+    expect(reads).toHaveLength(16);
     expect(reads).toContain('issues.list');
     expect(reads).toContain('repos.getFileContents');
     expect(reads).toContain('commits.get');
@@ -140,19 +148,22 @@ describe('WRITE_CAPABILITIES', () => {
   it('answers isWriteCapability consistently', () => {
     expect(isWriteCapability('files.pushFiles')).toBe(true);
     expect(isWriteCapability('files.create')).toBe(true);
+    expect(isWriteCapability('labels.create')).toBe(true);
     expect(isWriteCapability('pulls.list')).toBe(false);
     expect(isWriteCapability('branches.list')).toBe(false);
+    expect(isWriteCapability('labels.list')).toBe(false);
   });
 });
 
 describe('PARAM_CAPABILITY_IDS', () => {
-  it('has exactly the four documented entries', () => {
+  it('has exactly the five documented entries', () => {
     expect([...PARAM_CAPABILITY_IDS].sort()).toEqual(
       [
         'pulls.list.headFilter',
         'pulls.list.milestoneFilter',
         'issues.list.milestoneFilter',
         'files.pushFiles.atomic',
+        'repos.listStargazers.timestamps',
       ].sort(),
     );
   });
@@ -166,7 +177,7 @@ describe('PARAM_CAPABILITY_IDS', () => {
 
   it('has a compile-time type matching the runtime list', () => {
     const ids: ParamCapabilityId[] = [...PARAM_CAPABILITY_IDS];
-    expect(ids).toHaveLength(4);
+    expect(ids).toHaveLength(5);
   });
 });
 

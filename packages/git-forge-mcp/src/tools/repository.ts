@@ -104,13 +104,47 @@ export function registerRepositoryTools(server: McpServer, ctx: ToolContext): vo
   );
 
   server.registerTool(
+    'git_list_stargazers',
+    {
+      title: 'List stargazers',
+      description: composeDescription({
+        summary:
+          'Lists stargazers. `timestamps: true` asks for `starred_at`, which only GitHub ' +
+          '(via a media type) and AtomGit can answer, so it is refused elsewhere rather ' +
+          'than returning rows without the field. Gitee cannot list stargazers at all: its ' +
+          'endpoint answers an empty array for every repository, so it is declared unsupported.',
+        platforms: platformSummary(snapshot, 'repos.listStargazers'),
+        notes: [
+          LISTING_NOTE,
+          'Use the repository\u2019s stargazers_count for a current total; this list is for surviving stars, not net growth.',
+        ],
+      }),
+      inputSchema: {
+        ...repoSchemas,
+        timestamps: z.boolean().optional().describe('Ask for the time each star was added.'),
+        maxPages: maxPagesSchema,
+      },
+    },
+    (args) =>
+      wrap(() =>
+        ctx.client.listStargazers({
+          provider: args.provider,
+          owner: args.owner,
+          repo: args.repo,
+          timestamps: args.timestamps,
+          maxPages: args.maxPages,
+        }),
+      ),
+  );
+
+  server.registerTool(
     'git_get_file_contents',
     {
       title: 'Get file contents',
       description: composeDescription({
         summary:
           'Reads one file. `content` keeps the platform\u2019s encoding (base64). A ' +
-          'directory path is refused: v0.1.0 reads single files only.',
+          'directory path is refused: this SDK reads single files only.',
         platforms: platformSummary(snapshot, 'repos.getFileContents'),
         notes: [
           'A missing path is not uniform: Gitee answers 200 with an empty array, ' +

@@ -12,6 +12,8 @@
  *   request is built from the configured base URL instead.
  */
 import { selectIssueRows } from '../issues.js';
+import { labelKeyOf, selectLabelRows } from '../labels.js';
+import { sortEventsOldestFirst } from '../events.js';
 import { collectPullRequests, pullFromResponse, requirePullNumber } from '../pulls.js';
 import { confirmedSha, contentsBase64 } from '../../core/file-write.js';
 import { invalidArgumentError } from '../../core/errors.js';
@@ -21,8 +23,10 @@ import type {
   BranchCommitDomain,
   FilesDomain,
   IssueDomain,
+  LabelDomain,
   ProviderAdapter,
   PullRequestDomain,
+  ReleaseDomain,
   RepositoryDomain,
   WithProvider,
 } from '../types.js';
@@ -34,18 +38,24 @@ import {
   deriveParentHtmlUrl,
   headFilterUnsupported,
   joinLabels,
+  labelColorForAtomGit,
   listKey,
   mapBranch,
   mapComment,
   mapCommit,
   mapFileContent,
   mapIssue,
+  mapIssueEvents,
+  mapLabel,
   mapPullRequest,
+  mapRelease,
   mapRepository,
   mapRef,
+  mapStargazer,
   str,
   toAtomGitState,
 } from './map.js';
+import { sortReleasesNewestFirst } from '../releases.js';
 import { capabilities, paramCapabilities } from './capabilities.js';
 import type {
   Branch,
@@ -54,6 +64,7 @@ import type {
   CreateBranchParams,
   CreateCommentParams,
   CreateIssueParams,
+  CreateLabelParams,
   CreateOrUpdateFileParams,
   CreatePullRequestParams,
   CreateRepositoryParams,
@@ -66,15 +77,23 @@ import type {
   GetPullRequestParams,
   GetRepositoryParams,
   Issue,
+  IssueEvent,
+  Label,
   ListBranchesParams,
   ListCommitsParams,
   ListCommentsParams,
+  ListIssueEventsParams,
   ListIssuesParams,
+  ListLabelsParams,
   ListPullRequestsParams,
+  ListReleasesParams,
   ListRepositoriesParams,
+  ListStargazersParams,
   MergePullRequestParams,
   PullRequest,
+  Release,
   Repository,
+  Stargazer,
   UpdateIssueParams,
 } from '../../core/types.js';
 
@@ -111,7 +130,14 @@ function assertUpdate(params: CreateOrUpdateFileParams): void {
 
 /** Domain implementation backed by api.atomgit.com/api/v5. */
 class AtomGitAdapter
-  implements IssueDomain, PullRequestDomain, RepositoryDomain, FilesDomain, BranchCommitDomain
+  implements
+    IssueDomain,
+    PullRequestDomain,
+    RepositoryDomain,
+    FilesDomain,
+    BranchCommitDomain,
+    ReleaseDomain,
+    LabelDomain
 {
   readonly provider = 'atomgit' as const;
   readonly capabilities = capabilities;
@@ -228,6 +254,38 @@ class AtomGitAdapter
       params.number,
     );
     return this.createComment(ctx, params, `${REPO_PATH}/issues/{number}/comments`, parentUrl);
+  }
+
+  /**
+   * Reads the label operation log.
+   *
+   * The path is owner-scoped with `repo` in the query string, and the endpoint
+   * accepts no page parameter — so it is a single request and `maxPages` does
+   * not apply. AtomGit records a whole label edit as one English sentence, which
+   * the mapper expands into one event per label.
+   */
+  async listIssueEvents(
+    ctx: AdapterCtx,
+    params: WithProvider<ListIssueEventsParams>,
+  ): Promise<IssueEvent[]> {
+    const response = await ctx.http.request<unknown>({
+      method: 'GET',
+      path: '/repos/{owner}/issues/{number}/operate_logs',
+      pathParams: { owner: params.owner, number: String(params.number) },
+      query: { repo: params.repo },
+    });
+    if (!Array.isArray(response.json)) {
+      throw ctx.http.invalidResponse(
+        response,
+        'The AtomGit operation-log response must be an array.',
+      );
+    }
+    // Sorted oldest-first for the same reason as Gitee: the log's wire order is
+    // not a contract, and one sentence may expand to several labels that must
+    // stay adjacent to each other.
+    return sortEventsOldestFirst(
+      response.json.flatMap((entry) => mapIssueEvents(params.owner, params.repo, entry)),
+    );
   }
 
   /* ---------------------------------------------------------------------- */
@@ -445,10 +503,10 @@ class AtomGitAdapter
 
     // A missing path is a 404 `{error_code:404,...}` on AtomGit (unlike Gitee's
     // `200 + []`), which `core` already maps to NOT_FOUND. An array still means
-    // "directory", which v0.1.0 cannot represent.
+    // "directory", which this SDK cannot represent.
     if (Array.isArray(response.json)) {
       throw invalidArgumentError(
-        `Invalid \`path\`: "${params.path}" is a directory. v0.1.0 getFileContents reads a single file only.`,
+        `Invalid \`path\`: "${params.path}" is a directory. this SDK reads a single file only.`,
         'atomgit',
       );
     }
@@ -510,6 +568,109 @@ class AtomGitAdapter
   pushFiles = unsupported('files.pushFiles', 'atomgit');
 
   /* ---------------------------------------------------------------------- */
+  /* Release                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Lists releases, newest first.
+   *
+   * `direction=desc` is sent because the platform's default order is not the one
+   * a "latest releases" caller wants.
+   */
+  async listReleases(
+    ctx: AdapterCtx,
+    params: WithProvider<ListReleasesParams>,
+  ): Promise<Release[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/releases`,
+        pathParams: repoParams(params.owner, params.repo),
+        query: { direction: 'desc' },
+      },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: (raw) => listKey(asRecord(raw).tag_name),
+      },
+    );
+    return sortReleasesNewestFirst(
+      entries.map((entry) => mapRelease(params.owner, params.repo, entry)),
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Label                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  async listLabels(ctx: AdapterCtx, params: WithProvider<ListLabelsParams>): Promise<Label[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/labels`,
+        pathParams: repoParams(params.owner, params.repo),
+      },
+      {
+        maxPages: params.maxPages,
+        requireComplete: params.requireComplete,
+        selectItems: (raw, { response }) =>
+          selectLabelRows(ctx.http, response, params.requireComplete),
+        keyOf: labelKeyOf(),
+      },
+    );
+    return entries.map((entry) => mapLabel(params.owner, params.repo, entry));
+  }
+
+  /**
+   * Creates a label.
+   *
+   * AtomGit takes an `x-www-form-urlencoded` body with `name` and `color` both
+   * required. Unlike the other two platforms the colour keeps its `#` prefix.
+   */
+  async createLabel(ctx: AdapterCtx, params: WithProvider<CreateLabelParams>): Promise<Label> {
+    const response = await ctx.http.request<unknown>({
+      method: 'POST',
+      path: `${REPO_PATH}/labels`,
+      pathParams: repoParams(params.owner, params.repo),
+      paramsIn: 'form',
+      body: { name: params.name, color: labelColorForAtomGit(params.color) },
+    });
+    return mapLabel(params.owner, params.repo, response.json);
+  }
+
+  /**
+   * Lists stargazers, newest first.
+   *
+   * `timestamps` has no effect here because AtomGit always reports `starred_at`;
+   * the parameter is checked by the facade so a caller asking for it on a
+   * platform that cannot answer gets a capability error instead of a list
+   * silently missing the field.
+   */
+  async listStargazers(
+    ctx: AdapterCtx,
+    params: WithProvider<ListStargazersParams>,
+  ): Promise<Stargazer[]> {
+    const entries = await collectPages<unknown>(
+      ctx.http,
+      {
+        method: 'GET',
+        path: `${REPO_PATH}/stargazers`,
+        pathParams: repoParams(params.owner, params.repo),
+      },
+      {
+        maxPages: params.maxPages,
+        selectItems: (raw) => asArray(raw),
+        keyOf: (raw) => listKey(asRecord(raw).login ?? asRecord(raw).id),
+      },
+    );
+    return entries
+      .map((entry) => mapStargazer(params.owner, params.repo, entry))
+      .filter((entry): entry is Stargazer => entry !== undefined);
+  }
+
+  /* ---------------------------------------------------------------------- */
   /* Branch / Commit                                                        */
   /* ---------------------------------------------------------------------- */
 
@@ -568,7 +729,7 @@ class AtomGitAdapter
       },
       {
         maxPages: params.maxPages,
-        query: { sha: params.branch },
+        query: { sha: params.branch, since: params.since, until: params.until },
         selectItems: (raw) => asArray(raw),
         keyOf: (raw) => listKey(asRecord(raw).sha),
       },
