@@ -109,15 +109,21 @@ Gitee 的 Star 列表是唯一「端点存在但不可用」的 P：`/stargazers
 
 下面的命令钉住 `0.2.0`，以便客户端始终启动你选定的版本，而不是 `latest` 解析到的任意版本。用 Node 20 或更高版本附带的 `npx` 启动。`--yes` 用于跳过安装确认，避免 GUI 客户端启动时等待输入。以下配置均开启只读模式。
 
-**Claude Desktop**（Settings → Developer → Edit Config，即 `claude_desktop_config.json`）和 **Cursor**（用户 `~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）使用：
+**Magpie**（资源库 → MCP 服务器 → 添加服务器）和 **Cursor**（用户 `~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）使用 `mcpServers`。**Claude Desktop**（Settings → Developer → Edit Config，即 `claude_desktop_config.json`）可沿用同一配置，省略 `type`，由 `command` 指定 stdio 启动方式。
 
 ```json
 {
   "mcpServers": {
     "git-forge": {
+      "type": "stdio",
       "command": "npx",
       "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
-      "env": { "GIT_FORGE_READONLY": "1" }
+      "env": {
+        "GITHUB_TOKEN": "",
+        "GITEE_TOKEN": "",
+        "ATOMGIT_TOKEN": "",
+        "GIT_FORGE_READONLY": "1"
+      }
     }
   }
 }
@@ -133,18 +139,28 @@ Gitee 的 Star 列表是唯一「端点存在但不可用」的 P：`/stargazers
         "type": "stdio",
         "command": "npx",
         "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
-        "env": { "GIT_FORGE_READONLY": "1" }
+        "env": {
+          "GITHUB_TOKEN": "",
+          "GITEE_TOKEN": "",
+          "ATOMGIT_TOKEN": "",
+          "GIT_FORGE_READONLY": "1"
+        }
       }
     }
   }
 }
 ```
 
+只在客户端的**私有设置**里填入要用的平台令牌，空字符串表示未配置。如果客户端从环境变量或密钥管理器注入令牌，请省略对应的空键，避免覆盖已注入的值。不要提交真实令牌，也不要假设 JSON 会自动展开 `$GITHUB_TOKEN` 或 `${GITHUB_TOKEN}`。除非确实需要写入，否则保留 `"GIT_FORGE_READONLY": "1"`。
+
+与现有配置合并后重启服务。看到 29 个工具只说明启动成功，**不代表令牌有效**。要验证仓库访问权限，用 `git_get_repository` 读取一个你有权访问的仓库，传入对应的 `provider`、`owner` 和 `repo`。如果返回 `AUTH_MISSING`，说明服务进程没有收到该平台的令牌。
+
+**如果没有列出工具**，先检查启动命令和 stderr（stdout 仅承载 MCP 协议）：
+
 - 如果 Windows GUI 不能直接启动 `npx`，改用 `"command": "cmd.exe"` 和 `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.2.0"]`。如果客户端的 `PATH` 中没有 Node 和 npm，使用下方的绝对路径方式。
+- 如果 Magpie 显示「已退出 (4294963238)」（Windows 上的 `ENOENT`），请看 npm 调试日志。若缺少的是 `_npx/.../package.json`，说明 `npx` **已经启动**，但缓存中的安装不完整。保留原命令和令牌，在该服务的 `env` 中将 `npm_config_cache` 设为一个新的、可写的空目录（绝对路径），重新连接，让 `npx` 在那里安装。无需清空共享的 npm 缓存。
 - 如果 npm 镜像尚未同步该版本，可在服务的 `env` 中添加 `"npm_config_registry": "https://registry.npmjs.org/"`。
 - 离线使用时，按上文安装本地归档。在安装目录运行 `node -p "process.execPath"`，用得到的 Node 绝对路径作为 `command`；再运行 `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"`，将结果末尾的 `package.json` 换成 `dist/index.js`，以这个绝对路径作为 `args` 的唯一一项。
-
-与现有配置合并后重启客户端；即使没有令牌也应能列出 29 个工具。需要读取时，通过客户端私有环境/密钥设置或可信本地启动器，将所需令牌传给**服务进程**。不要假设 GUI 会继承终端环境，也不要在 JSON 中假设 `$GITHUB_TOKEN` 或 `${GITHUB_TOKEN}` 会自动展开，否则传入的可能只是字面字符串。不要提交令牌。看不到工具时检查启动命令和 stderr，stdout 仅承载 MCP 协议。
 
 初始化 MCP 会话后，从客户端发出以下只读 JSON-RPC 请求。示例中的组织和仓库均为虚构名称，请替换为你有权读取的仓库。
 

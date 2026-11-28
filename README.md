@@ -109,15 +109,21 @@ Names in the middle column are our tools **without** their `git_` prefix. The ri
 
 The commands below pin `0.2.0` so a client keeps starting the version you chose rather than whatever `latest` resolves to. Use `npx` from Node 20 or newer. `--yes` skips the install prompt so a GUI client can start the server unattended. Both examples start it in read-only mode.
 
-**Claude Desktop** (Settings → Developer → Edit Config, `claude_desktop_config.json`) and **Cursor** (user `~/.cursor/mcp.json` or project `.cursor/mcp.json`) use this JSON:
+**Magpie** (Library → MCP Servers → Add Server) and **Cursor** (user `~/.cursor/mcp.json` or project `.cursor/mcp.json`) use `mcpServers`. For **Claude Desktop** (Settings → Developer → Edit Config, `claude_desktop_config.json`), use the same entry without `type`; `command` selects stdio.
 
 ```json
 {
   "mcpServers": {
     "git-forge": {
+      "type": "stdio",
       "command": "npx",
       "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
-      "env": { "GIT_FORGE_READONLY": "1" }
+      "env": {
+        "GITHUB_TOKEN": "",
+        "GITEE_TOKEN": "",
+        "ATOMGIT_TOKEN": "",
+        "GIT_FORGE_READONLY": "1"
+      }
     }
   }
 }
@@ -133,18 +139,28 @@ The commands below pin `0.2.0` so a client keeps starting the version you chose 
         "type": "stdio",
         "command": "npx",
         "args": ["--yes", "@charles7c/git-forge-mcp@0.2.0"],
-        "env": { "GIT_FORGE_READONLY": "1" }
+        "env": {
+          "GITHUB_TOKEN": "",
+          "GITEE_TOKEN": "",
+          "ATOMGIT_TOKEN": "",
+          "GIT_FORGE_READONLY": "1"
+        }
       }
     }
   }
 }
 ```
 
+Fill in only the tokens you need in your client's **private** settings. An empty string means “not configured”. If the client injects a token from its environment or secret store, omit the corresponding empty key so it does not override the secret. Do not commit tokens or assume JSON expands `$GITHUB_TOKEN` or `${GITHUB_TOKEN}`. Keep `GIT_FORGE_READONLY` set to `"1"` unless you intend to allow writes.
+
+Merge the entry into your settings and restart the server. Seeing 29 tools confirms the server started, **not** that a token is valid. To check repository access, run `git_get_repository` with that `provider` and the `owner` and `repo` of a repository you may read. `AUTH_MISSING` means the server did not receive a token for that provider.
+
+**If no tools appear**, check the startup command and stderr (stdout carries the MCP protocol):
+
 - If a Windows GUI cannot launch `npx` directly, use `"command": "cmd.exe"` and `"args": ["/d", "/c", "npx", "--yes", "@charles7c/git-forge-mcp@0.2.0"]`. If Node and npm are not on the client's `PATH`, use the absolute-path setup below.
+- If Magpie reports exit `4294963238` (`ENOENT` on Windows), check the npm debug log. If it names a missing `_npx/.../package.json`, `npx` **did** launch, but its cached installation is incomplete. Keep the command and tokens unchanged; set `npm_config_cache` in this server's `env` to a new, empty, writable directory (absolute path), then reconnect to let `npx` install the package there. There is no need to clear the shared npm cache.
 - If your npm mirror has not synced the release, optionally add `"npm_config_registry": "https://registry.npmjs.org/"` to the server's `env` object.
 - For offline use, install the local tarballs as described above. Set `command` to the absolute Node path from `node -p "process.execPath"`. Run `node -p "require.resolve('@charles7c/git-forge-mcp/package.json')"` from that installation, replace the trailing `package.json` with `dist/index.js`, and use that absolute path as the only `args` entry.
-
-Merge the entry with existing settings and restart the client. Expect 29 tools even without credentials. For reads, pass the relevant token to the **server process** through your client's private environment/secret settings or a trusted local launcher. Do not assume a GUI inherits your shell environment or that JSON expands `$GITHUB_TOKEN`/`${GITHUB_TOKEN}`; those can be literal strings. Never commit credentials. If no tools appear, check the launch command and stderr; stdout is for MCP only.
 
 After initializing an MCP session, send this read-only JSON-RPC request from the client. The names below are fictional; replace them with a repository you are authorized to read.
 
